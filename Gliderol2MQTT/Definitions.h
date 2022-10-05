@@ -1,4 +1,14 @@
-// Definitions.h
+/*
+Name:		Definitions.h
+Created:	10/05/2022
+Author:		Daniel Young
+
+This file is part of Gliderol2MQTT (G2M) which is private software.
+
+Notes
+
+
+*/
 
 #ifndef _DEFINITIONS_h
 #define _DEFINITIONS_h
@@ -26,6 +36,10 @@
 
 // Comment out if SD Card not used, it will simply bypass the attempts to load from SD Card
 #define SDCARD
+
+// If there is a top sensor in use, change this to true.  This will enable 'stop' functionality to be reported correctly
+// as 'stopped' is somewhere between top and bottom after the duration to open or close has elapsed.  Otherwise
+// only open/closed can be reported.
 #define USING_TOP_SENSOR false
 
 
@@ -39,6 +53,7 @@
 // How often the status of the door is sent out
 #define MQTT_STATUS_INTERVAL 3000
 
+// How long the door takes to open from fully closed, and vice versa.  Used for timing the 'Opening' and 'Closing' statuses.
 #define TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED 10000
 #define TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN 10000
 
@@ -150,7 +165,7 @@ enum mqttSubscriptions
 #define DOOR_STATE_MAX_LENGTH 10
 #define DEBUG_MAX_LENGTH 100
 #define MQTT_TOPIC_MAX_LENGTH 100
-#define MQTT_PAYLOAD_LINE_MAX_LENGTH
+#define MQTT_PAYLOAD_LINE_MAX_LENGTH 100
 
 
 
@@ -167,18 +182,9 @@ Brown				8				GND
 #define PIN_FOR_GARAGE_DOOR_STOP D5		// Stop Pin (Relay 3) 
 #define PIN_FOR_GARAGE_DOOR_CLOSE D3	// Down Pin (Relay 2) Close
 #define PIN_FOR_GARAGE_DOOR_OPEN D4		// Up Pin (Relay 1) Open
-
-
 #define PIN_FOR_RELAY_POWER D8			// Power Safeguard Relay Power
 #define PIN_FOR_BOTTOM_SENSOR D6 // Closed Sensor
 #define PIN_FOR_TOP_SENSOR D7 // Open Sensor
-
-//D8 orig sensor
-
-//#define PIN_FOR_GARAGE_DOOR_OPEN D0 // Transmission set pin
-//#define PIN_FOR_GARAGE_DOOR_STOP D3 // Serial Receive pin
-//#define PIN_FOR_GARAGE_DOOR_CLOSE D10 // Serial Transmit pin
-//#define PIN_FOR_SENSOR D4 // Open or Closed Sensor pin
 
 
 enum doorState
@@ -198,7 +204,7 @@ enum doorState
 #define DOOR_STATE_STOPPED_DESC "Stopped"
 #define DOOR_STATE_UNKNOWN_DESC "Unknown"
 
-
+// HomeKit default statuses, can be changed in conjunction with HomeBridge MQTTThing for example.
 #define DOOR_STATE_HOMEKIT_OPENING "o"
 #define DOOR_STATE_HOMEKIT_CLOSING "c"
 #define DOOR_STATE_HOMEKIT_OPEN "O"
@@ -206,7 +212,7 @@ enum doorState
 #define DOOR_STATE_HOMEKIT_STOPPED "S"
 #define DOOR_STATE_HOMEKIT_UNKNOWN "U"
 
-// Ensure we stick to fixed values by forcing from a selection of values for a Modbus request & response
+// Ensure we stick to fixed values by forcing from a selection of values
 enum statusValues
 {
 	preProcessing,

@@ -1,10 +1,9 @@
 /*
-Name:		Alpha2MQTT.ino
-Created:	8/24/2022
+Name:		Gliderol2MQTT.ino
+Created:	10/05/2022
 Author:		Daniel Young
 
-This file is part of Alpha2MQTT (A2M) which is released under GNU GENERAL PUBLIC LICENSE.
-See file LICENSE or go to https://choosealicense.com/licenses/gpl-3.0/ for full license details.
+This file is part of Gliderol2MQTT (G2M) which is private software.
 
 Notes
 
