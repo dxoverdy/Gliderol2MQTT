@@ -25,10 +25,10 @@ Notes
 #define WIFI_PASSWORD	"Sniegulinka1983"
 
 // Update with your MQTT Broker details
-#define MQTT_SERVER	"192.168.1.40"
+#define MQTT_SERVER	"192.168.1.135"
 #define MQTT_PORT	1883
-#define MQTT_USERNAME	"Alpha"			// Empty string for none.
-#define MQTT_PASSWORD	"Inverter1"
+#define MQTT_USERNAME	"Garage"			// Empty string for none.
+#define MQTT_PASSWORD	"DoorOpener1"
 
 // The device name is used as the MQTT base topic and presence on the network.
 // If you need more than one Alpha2MQTT on your network, give them unique names.
@@ -40,7 +40,7 @@ Notes
 // If there is a top sensor in use, change this to true.  This will enable 'stop' functionality to be reported correctly
 // as 'stopped' is somewhere between top and bottom after the duration to open or close has elapsed.  Otherwise
 // only open/closed can be reported.
-#define USING_TOP_SENSOR false
+#define USING_TOP_SENSOR true
 
 
 // These timers are used in the main loop.
@@ -51,7 +51,7 @@ Notes
 #define UPDATE_STATUS_BAR_INTERVAL 500
 
 // How often the status of the door is sent out
-#define MQTT_STATUS_INTERVAL 3000
+#define MQTT_STATUS_INTERVAL 5000
 
 // How long the door takes to open from fully closed, and vice versa.  Used for timing the 'Opening' and 'Closing' statuses.
 #define TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED 10000
@@ -166,6 +166,7 @@ enum mqttSubscriptions
 #define DEBUG_MAX_LENGTH 100
 #define MQTT_TOPIC_MAX_LENGTH 100
 #define MQTT_PAYLOAD_LINE_MAX_LENGTH 100
+#define MQTT_PAYLOAD_STATE_ADDITION 256
 
 
 

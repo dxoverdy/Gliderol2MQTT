@@ -59,7 +59,7 @@ char _deviceName[SETTING_MAX_WIDTH] = DEVICE_NAME;
 bool _usingTopSensor = USING_TOP_SENSOR;
 int _doorCloseTime = TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN;
 int _doorOpenTime = TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED;
-
+bool _forceOnce = false;
 
 // Fixed char array for messages to the serial port
 char _debugOutput[DEBUG_MAX_LENGTH];
@@ -69,6 +69,7 @@ static unsigned long _mqttOpeningClosingManagementTimer = 0;
 static doorState _doorState = doorState::stateUnknown;
 static doorState _doorTargetState = doorState::stateUnknown;
 static doorState _mqttOpeningClosingManagement = doorState::stateUnknown;
+
 char _doorStateDesc[DOOR_STATE_MAX_LENGTH] = "";
 char _doorTargetStateHomeKit[2] = DOOR_STATE_HOMEKIT_UNKNOWN;
 char _doorStateHomeKit[2] = DOOR_STATE_HOMEKIT_UNKNOWN;
@@ -90,7 +91,70 @@ void getDoorState()
 	bool isClosed;
 	bool isStopped;
 	bool stillWithinTimer = false;
+	char topicResponse[MQTT_TOPIC_MAX_LENGTH] = ""; // 100 should cover a topic name
 
+
+
+	// Determine state from what the pins are saying
+	pinBottomSensorValue = digitalRead(PIN_FOR_BOTTOM_SENSOR);
+	isClosed = (pinBottomSensorValue == 0);
+
+	if (_usingTopSensor)
+	{
+		pinTopSensorValue = digitalRead(PIN_FOR_TOP_SENSOR);
+		isOpen = (pinTopSensorValue == 0);
+		isStopped = (!isOpen && !isClosed);
+	}
+	else
+	{
+		// Not utilising a top sensor, so can only presume open is opposite of closed, and Stopped is indeterminate.
+		isOpen = !isClosed;
+		isStopped = false;
+	}
+
+
+
+
+	// Lets determine if opening or closing via a genuine fob or on-pcb button
+	// We do this by comparing the previous door state to current.  If previous open and now not, then closing...
+	if (_doorState == doorState::open && !isOpen)
+	{
+		// Start the closing timer
+		// So send out an MQTT saying target is CLOSED, and start the timer and set the status
+		emptyPayload();
+		addToPayload("C");
+		sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
+		sendMqtt(topicResponse);
+
+		emptyPayload();
+		_mqttOpeningClosingManagement = doorState::closing;
+		_mqttOpeningClosingManagementTimer = millis();
+
+		// Force a Runstate Update immediately
+		_forceOnce = true;
+	}
+	// And likewise the opposite, compare previous door state to current.  If previous closed and now not, then opening...
+	else if (_doorState == doorState::closed && !isClosed)
+	{
+		// Start the opening timer
+		// So send out an MQTT saying target is OPEN, and start the timer and set the status
+		emptyPayload();
+		addToPayload("O");
+		sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
+		sendMqtt(topicResponse);
+
+		emptyPayload();
+		_mqttOpeningClosingManagement = doorState::opening;
+		_mqttOpeningClosingManagementTimer = millis();
+
+		// Force a Runstate Update immediately
+		_forceOnce = true;
+	}
+
+
+
+
+	// So, if we have determined either via FOB or via MQTT that we are opening or closing....
 	if (_mqttOpeningClosingManagement == doorState::opening)
 	{
 		// There was an MQTT to control, which will have set the time of instigation
@@ -101,18 +165,20 @@ void getDoorState()
 
 			// Timer elapsed to handle an open, so it is presumably stopped, but we will verify that later with sensors
 			_doorState = doorState::stopped;
-			_doorTargetState = doorState::stopped;
 			strcpy(_doorStateDesc, DOOR_STATE_STOPPED_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_STOPPED);
-			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_STOPPED);
+
+			_doorTargetState = doorState::open;
+			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_OPEN);
 		}
 		else
 		{
 			// Still opening
 			_doorState = doorState::opening;
-			_doorTargetState = doorState::open;
 			strcpy(_doorStateDesc, DOOR_STATE_OPENING_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_OPENING);
+
+			_doorTargetState = doorState::open;
 			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_OPEN);
 			stillWithinTimer = true;
 		}
@@ -127,18 +193,20 @@ void getDoorState()
 
 			// Timer elapsed to handle a close, so it is presumably stopped, but we will verify that later with sensors
 			_doorState = doorState::stopped;
-			_doorTargetState = doorState::stopped;
 			strcpy(_doorStateDesc, DOOR_STATE_STOPPED_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_STOPPED);
-			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_STOPPED);
+
+			_doorTargetState = doorState::closed;
+			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_CLOSED);
 		}
 		else
 		{
 			// Still closing
 			_doorState = doorState::closing;
-			_doorTargetState = doorState::closed;
 			strcpy(_doorStateDesc, DOOR_STATE_CLOSING_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_CLOSING);
+
+			_doorTargetState = doorState::closed;
 			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_CLOSED);
 			stillWithinTimer = true;
 		}
@@ -149,10 +217,12 @@ void getDoorState()
 		_mqttOpeningClosingManagement = doorState::stateUnknown;
 
 		_doorState = doorState::stopped;
-		_doorTargetState = doorState::stopped;
 		strcpy(_doorStateDesc, DOOR_STATE_STOPPED_DESC);
 		strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_STOPPED);
-		strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_STOPPED);
+
+		// Target cannot be stopped, so inform HomeKit that Open is probably the target
+		_doorTargetState = doorState::open;
+		strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_OPEN);
 	}
 
 
@@ -165,36 +235,24 @@ void getDoorState()
 
 	if (!stillWithinTimer)
 	{
-		pinBottomSensorValue = digitalRead(PIN_FOR_BOTTOM_SENSOR);
-		isClosed = (pinBottomSensorValue == 0);
-
-
-		if (_usingTopSensor)
-		{
-			pinTopSensorValue = digitalRead(PIN_FOR_TOP_SENSOR);
-			isOpen = (pinTopSensorValue == 0);
-			isStopped = (!isOpen && !isClosed);
-		}
-		else
-		{
-			// Not utilising a top sensor, so can only presume open is opposite of closed, and Stopped is indeterminate.
-			isOpen = !isClosed;
-			isStopped = false;
-		}
-		
-
 		if (isStopped)
 		{
+			// If stopped, and verified as outside timer, send HomeKit that we are probably after a target of open, so that the next HomeKit interaction is a close.
 			_doorState = doorState::stopped;
 			strcpy(_doorStateDesc, DOOR_STATE_STOPPED_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_STOPPED);
-			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_STOPPED);
+
+			_doorTargetState = doorState::open;
+			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_OPEN);
 		}
 		else if (isOpen)
 		{
 			_doorState = doorState::open;
 			strcpy(_doorStateDesc, DOOR_STATE_OPEN_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_OPEN);
+
+			// Open after the timer, so presume target was indeed open
+			_doorTargetState = doorState::open;
 			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_OPEN);
 
 		}
@@ -203,6 +261,9 @@ void getDoorState()
 			_doorState = doorState::closed;
 			strcpy(_doorStateDesc, DOOR_STATE_CLOSED_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_CLOSED);
+
+			// Closed after the timer, so presume target was indeed closed
+			_doorTargetState = doorState::closed;
 			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_CLOSED);
 		}
 	}
@@ -872,7 +933,6 @@ void updateOLED(bool justStatus, const char* line2, const char* line3, const cha
 updateRunstate
 
 Determines a few things about the sytem and updates the display
-Things updated - Dispatch state discharge/charge, battery power, battery percent
 */
 void updateRunstate()
 {
@@ -906,7 +966,10 @@ void updateRunstate()
 	pinBottomSensorValue = digitalRead(PIN_FOR_BOTTOM_SENSOR);
 
 
+
+
 	getDoorState();
+
 
 	if (checkTimer(&lastRunDisplay, DISPLAY_INTERVAL))
 	{
@@ -931,9 +994,11 @@ void updateRunstate()
 
 	
 
-	// Periodically send out the state
-	if (checkTimer(&lastRunMqttStatusInterval, MQTT_STATUS_INTERVAL))
+	// Periodically send out the state or unless forced once by another process
+	if (checkTimer(&lastRunMqttStatusInterval, MQTT_STATUS_INTERVAL) || _forceOnce)
 	{
+		_forceOnce = false;
+
 		// getCurrentDoorState for HomeKit
 		sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_CURRENT_DOOR_STATE);
 		strcpy(payloadLine, _doorStateHomeKit);
@@ -1095,11 +1160,10 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 	statusValues result = statusValues::preProcessing;
 	statusValues resultAddToPayload = statusValues::addedToPayload;
 
-	char stateAddition[256] = ""; // 256 should cover individual additions to be added to the payload.
-	char topicResponse[100] = ""; // 100 should cover a topic name
-	char topicIncomingCheck[100] = ""; // 100 should cover a topic name
+	char stateAddition[MQTT_PAYLOAD_STATE_ADDITION] = ""; // 256 should cover individual additions to be added to the payload.
+	char topicResponse[MQTT_TOPIC_MAX_LENGTH] = ""; // 100 should cover a topic name
+	char topicIncomingCheck[MQTT_TOPIC_MAX_LENGTH] = ""; // 100 should cover a topic name
 
-	Serial.println("got callback");
 	// Variables for new JSON parser
 	int iSegNameCounter;
 	int iSegValueCounter;
@@ -1113,6 +1177,8 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 	char pairNameClean[32] = "";
 	char pairValueRaw[32] = "";
 	char pairValueClean[32] = "";
+
+	/*
 	char registerAddress[32] = "";
 	char dataBytes[32] = "";
 	char value[32] = "";
@@ -1121,18 +1187,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 	char socPercent[32] = "";
 	char startPos[32] = "";
 	char endPos[32] = "";
-
-	// Convert incoming values into native data types for sending
-	uint16_t registerAddressConverted;
-	uint16_t singleRegisterValueConverted;
-	uint32_t dataRegisterValueConverted;
-	uint32_t chargeDischargeWattsConverted;
-	uint32_t durationSecondsConverted;
-	uint16_t batterySocPercentConverted;
-	uint16_t startPosConverted;
-	uint16_t endPosConverted;
-
-	uint8_t registerCount;
+	*/
 
 	// Bytes are received back as base ten, 0-255, so four chars to account for null terminator
 	//char rawByteForPayload[4] = "";
@@ -1152,13 +1207,12 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 	int pinOpenValue;
 	int pinStopValue;
 
-	//bool isClosed;
-	//bool isOpen;
-	getDoorState();
-
-
 	bool gotTopic = false;
 
+
+
+	// Get the state
+	getDoorState();
 
 	// Start by clearing out the payload
 	emptyPayload();
@@ -1190,6 +1244,9 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			gotTopic = true;
 			subScription = mqttSubscriptions::requestPerformClose;
 			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_PERFORM_CLOSE);
+
+			// Force a Runstate Update immediately
+			_forceOnce = true;
 		}
 	}
 	if (!gotTopic)
@@ -1200,6 +1257,9 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			gotTopic = true;
 			subScription = mqttSubscriptions::requestPerformOpen;
 			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_PERFORM_OPEN);
+
+			// Force a Runstate Update immediately
+			_forceOnce = true;
 		}
 	}
 	if (!gotTopic)
@@ -1210,6 +1270,9 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			gotTopic = true;
 			subScription = mqttSubscriptions::requestPerformStop;
 			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_PERFORM_STOP);
+
+			// Force a Runstate Update immediately
+			_forceOnce = true;
 		}
 	}
 
@@ -1400,6 +1463,9 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 				// Now in the onward processes ensure it is done
 				subScription = mqttSubscriptions::requestPerformOpen;
 				sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_PERFORM_OPEN);
+
+				// Force a Runstate Update immediately
+				_forceOnce = true;
 				
 			}
 			else if (strcmp(mqttIncomingPayload, DOOR_STATE_HOMEKIT_CLOSED) == 0)
@@ -1415,7 +1481,12 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 				// Now in the onward processes ensure it is done
 				subScription = mqttSubscriptions::requestPerformClose;
 				sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_PERFORM_CLOSE);
+
+				// Force a Runstate Update immediately
+				_forceOnce = true;
 			}
+
+			// Jury is out as to whether this is needed
 			else if (strcmp(mqttIncomingPayload, DOOR_STATE_HOMEKIT_STOPPED) == 0)
 			{
 				// HomeKit wants an immediate response to the set via an equivalent get within 1S, send it now.
@@ -1429,6 +1500,9 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 				// Now in the onward processes ensure it is done
 				subScription = mqttSubscriptions::requestPerformStop;
 				sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_PERFORM_STOP);
+
+				// Force a Runstate Update immediately
+				_forceOnce = true;
 			}
 		}
 	}
@@ -1694,7 +1768,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			digitalWrite(PIN_FOR_RELAY_POWER, LOW);
 #endif	
 			result = statusValues::setStopSuccess;
-			strcpy(statusMqttMessage, STATUS_SET_OPEN_SUCCESS_MQTT_DESC);
+			strcpy(statusMqttMessage, STATUS_SET_STOP_SUCCESS_MQTT_DESC);
 			sprintf(stateAddition, "{\r\n    \"statusValue\": \"%s\"\r\n    \"done\": true\r\n}", statusMqttMessage);
 
 			resultAddToPayload = addToPayload(stateAddition);
