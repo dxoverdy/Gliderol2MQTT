@@ -1,9 +1,10 @@
 /*
 Name:		Gliderol2MQTT.ino
-Created:	10/05/2022
+Created:	05/Oct/2022
 Author:		Daniel Young
 
-This file is part of Gliderol2MQTT (G2M) which is private software.
+This file is part of Alpha2MQTT (A2M) which is released under GNU GENERAL PUBLIC LICENSE.
+See file LICENSE or go to https://choosealicense.com/licenses/gpl-3.0/ for full license details.
 
 Notes
 
@@ -11,16 +12,14 @@ First, go and customise options at the top of Definitions.h!
 */
 
 // Supporting files
-
 #include "Definitions.h"
 #include <Arduino.h>
-#include <ESP8266WiFi.h>
+#include <WiFi.h>
 #include <PubSubClient.h>
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <SDFS.h>
 #include <SD.h>
 
 // Device parameters
@@ -66,9 +65,9 @@ char _debugOutput[DEBUG_MAX_LENGTH];
 
 // Door State
 static unsigned long _mqttOpeningClosingManagementTimer = 0;
-static doorState _doorState = doorState::stateUnknown;
-static doorState _doorTargetState = doorState::stateUnknown;
-static doorState _mqttOpeningClosingManagement = doorState::stateUnknown;
+static doorState _doorState = doorState::doorStateUnknown;
+static doorState _doorTargetState = doorState::doorStateUnknown;
+static doorState _mqttOpeningClosingManagement = doorState::doorStateUnknown;
 
 char _doorStateDesc[DOOR_STATE_MAX_LENGTH] = "";
 char _doorTargetStateHomeKit[2] = DOOR_STATE_HOMEKIT_UNKNOWN;
@@ -117,7 +116,7 @@ void getDoorState()
 
 	// Lets determine if opening or closing via a genuine fob or on-pcb button
 	// We do this by comparing the previous door state to current.  If previous open and now not, then closing...
-	if (_doorState == doorState::open && !isOpen)
+	if (_doorState == doorState::doorOpen && !isOpen)
 	{
 		// Start the closing timer
 		// So send out an MQTT saying target is CLOSED, and start the timer and set the status
@@ -127,14 +126,14 @@ void getDoorState()
 		sendMqtt(topicResponse);
 
 		emptyPayload();
-		_mqttOpeningClosingManagement = doorState::closing;
+		_mqttOpeningClosingManagement = doorState::doorClosing;
 		_mqttOpeningClosingManagementTimer = millis();
 
 		// Force a Runstate Update immediately
 		_forceOnce = true;
 	}
 	// And likewise the opposite, compare previous door state to current.  If previous closed and now not, then opening...
-	else if (_doorState == doorState::closed && !isClosed)
+	else if (_doorState == doorState::doorClosed && !isClosed)
 	{
 		// Start the opening timer
 		// So send out an MQTT saying target is OPEN, and start the timer and set the status
@@ -144,7 +143,7 @@ void getDoorState()
 		sendMqtt(topicResponse);
 
 		emptyPayload();
-		_mqttOpeningClosingManagement = doorState::opening;
+		_mqttOpeningClosingManagement = doorState::doorOpening;
 		_mqttOpeningClosingManagementTimer = millis();
 
 		// Force a Runstate Update immediately
@@ -155,73 +154,73 @@ void getDoorState()
 
 
 	// So, if we have determined either via FOB or via MQTT that we are opening or closing....
-	if (_mqttOpeningClosingManagement == doorState::opening)
+	if (_mqttOpeningClosingManagement == doorState::doorOpening)
 	{
 		// There was an MQTT to control, which will have set the time of instigation
 		if (checkTimer(&_mqttOpeningClosingManagementTimer, _doorOpenTime))
 		{
 			// Dealt with this now as the full time for the door to open has passed, so get rid so isn't processed next time
-			_mqttOpeningClosingManagement = doorState::stateUnknown;
+			_mqttOpeningClosingManagement = doorState::doorStateUnknown;
 
 			// Timer elapsed to handle an open, so it is presumably stopped, but we will verify that later with sensors
-			_doorState = doorState::stopped;
+			_doorState = doorState::doorStopped;
 			strcpy(_doorStateDesc, DOOR_STATE_STOPPED_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_STOPPED);
 
-			_doorTargetState = doorState::open;
+			_doorTargetState = doorState::doorOpen;
 			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_OPEN);
 		}
 		else
 		{
 			// Still opening
-			_doorState = doorState::opening;
+			_doorState = doorState::doorOpening;
 			strcpy(_doorStateDesc, DOOR_STATE_OPENING_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_OPENING);
 
-			_doorTargetState = doorState::open;
+			_doorTargetState = doorState::doorOpen;
 			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_OPEN);
 			stillWithinTimer = true;
 		}
 	}
-	else if (_mqttOpeningClosingManagement == doorState::closing)
+	else if (_mqttOpeningClosingManagement == doorState::doorClosing)
 	{
 		// There was an MQTT to control, which will have set the time of instigation
 		if (checkTimer(&_mqttOpeningClosingManagementTimer, _doorCloseTime))
 		{
 			// Dealt with this now as the full time for the door to close has passed, so get rid so isn't processed next time
-			_mqttOpeningClosingManagement = doorState::stateUnknown;
+			_mqttOpeningClosingManagement = doorState::doorStateUnknown;
 
 			// Timer elapsed to handle a close, so it is presumably stopped, but we will verify that later with sensors
-			_doorState = doorState::stopped;
+			_doorState = doorState::doorStopped;
 			strcpy(_doorStateDesc, DOOR_STATE_STOPPED_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_STOPPED);
 
-			_doorTargetState = doorState::closed;
+			_doorTargetState = doorState::doorClosed;
 			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_CLOSED);
 		}
 		else
 		{
 			// Still closing
-			_doorState = doorState::closing;
+			_doorState = doorState::doorClosing;
 			strcpy(_doorStateDesc, DOOR_STATE_CLOSING_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_CLOSING);
 
-			_doorTargetState = doorState::closed;
+			_doorTargetState = doorState::doorClosed;
 			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_CLOSED);
 			stillWithinTimer = true;
 		}
 	}
-	else if (_mqttOpeningClosingManagement == doorState::stopped)
+	else if (_mqttOpeningClosingManagement == doorState::doorStopped)
 	{
 		// Dealt with this now as no time needed for this to fulfil, so get rid so isn't processed next time
-		_mqttOpeningClosingManagement = doorState::stateUnknown;
+		_mqttOpeningClosingManagement = doorState::doorStateUnknown;
 
-		_doorState = doorState::stopped;
+		_doorState = doorState::doorStopped;
 		strcpy(_doorStateDesc, DOOR_STATE_STOPPED_DESC);
 		strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_STOPPED);
 
 		// Target cannot be stopped, so inform HomeKit that Open is probably the target
-		_doorTargetState = doorState::open;
+		_doorTargetState = doorState::doorOpen;
 		strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_OPEN);
 	}
 
@@ -238,32 +237,32 @@ void getDoorState()
 		if (isStopped)
 		{
 			// If stopped, and verified as outside timer, send HomeKit that we are probably after a target of open, so that the next HomeKit interaction is a close.
-			_doorState = doorState::stopped;
+			_doorState = doorState::doorStopped;
 			strcpy(_doorStateDesc, DOOR_STATE_STOPPED_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_STOPPED);
 
-			_doorTargetState = doorState::open;
+			_doorTargetState = doorState::doorOpen;
 			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_OPEN);
 		}
 		else if (isOpen)
 		{
-			_doorState = doorState::open;
+			_doorState = doorState::doorOpen;
 			strcpy(_doorStateDesc, DOOR_STATE_OPEN_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_OPEN);
 
 			// Open after the timer, so presume target was indeed open
-			_doorTargetState = doorState::open;
+			_doorTargetState = doorState::doorOpen;
 			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_OPEN);
 
 		}
 		else if (isClosed)
 		{
-			_doorState = doorState::closed;
+			_doorState = doorState::doorClosed;
 			strcpy(_doorStateDesc, DOOR_STATE_CLOSED_DESC);
 			strcpy(_doorStateHomeKit, DOOR_STATE_HOMEKIT_CLOSED);
 
 			// Closed after the timer, so presume target was indeed closed
-			_doorTargetState = doorState::closed;
+			_doorTargetState = doorState::doorClosed;
 			strcpy(_doorTargetStateHomeKit, DOOR_STATE_HOMEKIT_CLOSED);
 		}
 	}
@@ -286,12 +285,13 @@ void setup()
 	// Set up serial for debugging using an appropriate baud rate
 	// This is for communication with the development environment, NOT the Alpha system
 	// See Definitions.h for this.
-	Serial.begin(9600);
+	Serial.begin(115200);
 
 
-#ifdef SDCARD
+
+
 	// SD Card
-	const int chipSelect = D4;
+	const int chipSelect = PIN_FOR_SDCARD_VSPI_CS;
 
 	char fileContents[SETTINGS_FILE_BUFFER];
 	unsigned int fileContentsLength;
@@ -330,7 +330,7 @@ void setup()
 	if (!SD.begin(chipSelect))
 	{
 #ifdef DEBUG
-		Serial.println("initialization failed!");
+		Serial.println("Initialisation failed!");
 #endif
 		// No SD Card or other failure, display a warning for four seconds on the screen
 		updateOLED(false, "NO SD CARD", "Using", "Defaults..");
@@ -340,7 +340,7 @@ void setup()
 	else
 	{
 #ifdef DEBUG
-		Serial.println("initialisation done.");
+		Serial.println("Initialisation complete!");
 #endif
 
 		// SD Card is a go
@@ -565,39 +565,45 @@ File Format:
 	
 
 	/*
-	// open the file. note that only one file can be open at a time,
+	// Open the file. note that only one file can be opened at a time,
 	// so you have to close this one before opening another.
 	myFile = SD.open("test.txt", FILE_WRITE);
 
 	// if the file opened okay, write to it:
-	if (myFile) {
+	if (myFile)
+	{
 		Serial.print("Writing to test.txt...");
 		myFile.println("testing 1, 2, 3.");
+
 		// close the file:
 		myFile.close();
 		Serial.println("done.");
 	}
-	else {
+	else
+	{
 		// if the file didn't open, print an error:
 		Serial.println("error opening test.txt");
 	}
 	*/
 
 
-/*
+	/*
 	// re-open the file for reading:
 	myFile = SD.open("test.txt");
-	if (myFile) {
+	if (myFile)
+	{
 		Serial.println("test.txt:");
 
 		// read from the file until there's nothing else in it:
-		while (myFile.available()) {
+		while (myFile.available())
+		{
 			Serial.write(myFile.read());
 		}
 		// close the file:
 		myFile.close();
 	}
-	else {
+	else
+	{
 		// if the file didn't open, print an error:
 		Serial.println("error opening test.txt");
 	}
@@ -605,9 +611,6 @@ File Format:
 
 	// Free up for relay usage
 	SD.end();
-#endif
-
-
 
 
 	// We will pause here for the longest of the opening/closing durations
@@ -629,20 +632,12 @@ File Format:
 	pinMode(PIN_FOR_GARAGE_DOOR_CLOSE, OUTPUT);
 	pinMode(PIN_FOR_GARAGE_DOOR_OPEN, OUTPUT);
 	pinMode(PIN_FOR_GARAGE_DOOR_STOP, OUTPUT);
-	//pinMode(LED_BUILTIN, OUTPUT);
-	// 
-	// Use the appropriate pin to drive a separate relay to provide the door switching relay with constant power
-	// Power supplied by the appropriate pin isn't enough.
-	digitalWrite(PIN_FOR_RELAY_POWER, LOW);
-	pinMode(PIN_FOR_RELAY_POWER, OUTPUT);
 
 	//digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, LOW);
 	//digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, LOW);
 	//digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, LOW);
 
 	
-
-
 	// And for input
 	pinMode(PIN_FOR_BOTTOM_SENSOR, INPUT_PULLUP);
 	pinMode(PIN_FOR_TOP_SENSOR, INPUT_PULLUP);
@@ -715,17 +710,16 @@ The loop function runs overand over again until power down or reset
 void loop()
 {
 #ifdef DEBUG
-	int pC, pO, pS, pControl, pBottomSensor, pTopSensor;
+	int pC, pO, pS, pBottomSensor, pTopSensor;
 
 	pC = digitalRead(PIN_FOR_GARAGE_DOOR_CLOSE);
 	pS = digitalRead(PIN_FOR_GARAGE_DOOR_STOP);
 	pO = digitalRead(PIN_FOR_GARAGE_DOOR_OPEN);
-	pControl = digitalRead(PIN_FOR_RELAY_POWER);
 	pBottomSensor = digitalRead(PIN_FOR_BOTTOM_SENSOR);
 	pTopSensor = digitalRead(PIN_FOR_TOP_SENSOR);
 
 	// Just output raw pin signals
-	sprintf(_debugOutput, "", "Loop -- Close:%d, Open:%d, Stop:%d, Relay Power:%d, Bottom Sensor:%d, Top Sensor:%d", pC, pO, pS, pControl, pBottomSensor, pTopSensor);
+	sprintf(_debugOutput, "", "Loop -- Close:%d, Open:%d, Stop:%d, Bottom Sensor:%d, Top Sensor:%d", pC, pO, pS, pBottomSensor, pTopSensor);
 #endif
 
 	// Refresh LED Screen, will cause the status asterisk to flicker
@@ -947,7 +941,6 @@ void updateRunstate()
 	int pinOpenValue;
 	int pinStopValue;
 	int pinCloseValue;
-	int pinRelayPowerValue;
 	int pinTopSensorValue;
 	int pinBottomSensorValue;
 
@@ -960,7 +953,6 @@ void updateRunstate()
 	pinOpenValue = digitalRead(PIN_FOR_GARAGE_DOOR_OPEN);
 	pinStopValue = digitalRead(PIN_FOR_GARAGE_DOOR_STOP);
 	pinCloseValue = digitalRead(PIN_FOR_GARAGE_DOOR_CLOSE);
-	pinRelayPowerValue = digitalRead(PIN_FOR_RELAY_POWER);
 
 	pinTopSensorValue = digitalRead(PIN_FOR_TOP_SENSOR);
 	pinBottomSensorValue = digitalRead(PIN_FOR_BOTTOM_SENSOR);
@@ -981,11 +973,11 @@ void updateRunstate()
 		sprintf(relaysLine, "O%s, S%s, C%s", pinOpenValue == 1 ? "H" : "L", pinStopValue == 1 ? "H" : "L", pinCloseValue == 1 ? "H" : "L");
 		if (_usingTopSensor)
 		{
-			sprintf(pinsLine, "R%s, T%s, B%s", pinRelayPowerValue == 1 ? "H" : "L", pinTopSensorValue == 1 ? "H" : "L", pinBottomSensorValue == 1 ? "H" : "L");
+			sprintf(pinsLine, "T%s, B%s", pinTopSensorValue == 1 ? "H" : "L", pinBottomSensorValue == 1 ? "H" : "L");
 		}
 		else
 		{
-			sprintf(pinsLine, "R%s, B%s", pinRelayPowerValue == 1 ? "H" : "L", pinBottomSensorValue == 1 ? "H" : "L");
+			sprintf(pinsLine, "B%s", pinBottomSensorValue == 1 ? "H" : "L");
 		}
 		sprintf(doorStatusLine, "%s", _doorStateDesc);
 		//Serial.print(_usingTopSensor);
@@ -1073,8 +1065,6 @@ void mqttReconnect()
 			subscribed = subscribed && _mqtt.subscribe(subscriptionDef);
 			sprintf(subscriptionDef, "%s%s", _deviceName, MQTT_SUB_REQUEST_VALUE_PIN_OPEN);
 			subscribed = subscribed && _mqtt.subscribe(subscriptionDef);
-			sprintf(subscriptionDef, "%s%s", _deviceName, MQTT_SUB_REQUEST_VALUE_PIN_RELAYPOWER);
-			subscribed = subscribed && _mqtt.subscribe(subscriptionDef);
 
 			sprintf(subscriptionDef, "%s%s", _deviceName, MQTT_SUB_REQUEST_SET_VALUE_PIN_CLOSE);
 			subscribed = subscribed && _mqtt.subscribe(subscriptionDef);
@@ -1082,16 +1072,12 @@ void mqttReconnect()
 			subscribed = subscribed && _mqtt.subscribe(subscriptionDef);
 			sprintf(subscriptionDef, "%s%s", _deviceName, MQTT_SUB_REQUEST_SET_VALUE_PIN_OPEN);
 			subscribed = subscribed && _mqtt.subscribe(subscriptionDef);
-			sprintf(subscriptionDef, "%s%s", _deviceName, MQTT_SUB_REQUEST_SET_VALUE_PIN_RELAYPOWER);
-			subscribed = subscribed && _mqtt.subscribe(subscriptionDef);
 
 			sprintf(subscriptionDef, "%s%s", _deviceName, MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_CLOSE);
 			subscribed = subscribed && _mqtt.subscribe(subscriptionDef);
 			sprintf(subscriptionDef, "%s%s", _deviceName, MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_STOP);
 			subscribed = subscribed && _mqtt.subscribe(subscriptionDef);
 			sprintf(subscriptionDef, "%s%s", _deviceName, MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_OPEN);
-			subscribed = subscribed && _mqtt.subscribe(subscriptionDef);
-			sprintf(subscriptionDef, "%s%s", _deviceName, MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_RELAYPOWER);
 			subscribed = subscribed && _mqtt.subscribe(subscriptionDef);
 
 			// Apple Homekit subscriptions
@@ -1340,16 +1326,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_VALUE_PIN_STOP);
 		}
 	}
-	if (!gotTopic)
-	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_VALUE_PIN_RELAYPOWER);
-		if (strcmp(topic, topicIncomingCheck) == 0)
-		{
-			gotTopic = true;
-			subScription = mqttSubscriptions::requestValuePinRelayPower;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_VALUE_PIN_RELAYPOWER);
-		}
-	}
+
 
 
 	if (!gotTopic)
@@ -1380,18 +1357,6 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			gotTopic = true;
 			subScription = mqttSubscriptions::requestSetValuePinOpen;
 			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_SET_VALUE_PIN_OPEN);
-		}
-	}
-	if (!gotTopic)
-	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_SET_VALUE_PIN_RELAYPOWER);
-		if (strcmp(topic, topicIncomingCheck) == 0)
-		{
-			gotTopic = true;
-			subScription = mqttSubscriptions::requestSetValuePinRelayPower;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_SET_VALUE_PIN_RELAYPOWER);
-			Serial.println(topicResponse);
-
 		}
 	}
 
@@ -1426,17 +1391,6 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			gotTopic = true;
 			subScription = mqttSubscriptions::requestClearValuePinOpen;
 			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_OPEN);
-		}
-	}
-
-	if (!gotTopic)
-	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_RELAYPOWER);
-		if (strcmp(topic, topicIncomingCheck) == 0)
-		{
-			gotTopic = true;
-			subScription = mqttSubscriptions::requestClearValuePinRelayPower;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_RELAYPOWER);
 		}
 	}
 
@@ -1687,7 +1641,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 
 			// If using a separate power driver as a result of SD Card usage
 #ifdef SDCARD
-			digitalWrite(PIN_FOR_RELAY_POWER, HIGH);
+			digitalWrite(PIN_FOR_RELAY_POWER, LOW);
 			delay(100);
 #endif
 			// The relays are off at +12V, so set pin low to create voltage difference and kick them in
@@ -1699,16 +1653,16 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			delay(250);
 			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, HIGH);
 #ifdef SDCARD
-			digitalWrite(PIN_FOR_RELAY_POWER, LOW);
+			digitalWrite(PIN_FOR_RELAY_POWER, HIGH);
 #endif	
 
 			result = statusValues::setCloseSuccess;
 			strcpy(statusMqttMessage, STATUS_SET_CLOSE_SUCCESS_MQTT_DESC);
-			sprintf(stateAddition, "{\r\n    \"statusValue\": \"%s\"\r\n    \"done\": true\r\n}", statusMqttMessage);
+			sprintf(stateAddition, "{\r\n    \"statusValue\": \"%s\"\r\n    ,\"done\": true\r\n}", statusMqttMessage);
 
 			resultAddToPayload = addToPayload(stateAddition);
 
-			_mqttOpeningClosingManagement = doorState::closing;
+			_mqttOpeningClosingManagement = doorState::doorClosing;
 			_mqttOpeningClosingManagementTimer = millis();
 
 		}
@@ -1721,7 +1675,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 
 			// If using a separate power driver as a result of SD Card usage
 #ifdef SDCARD
-			digitalWrite(PIN_FOR_RELAY_POWER, HIGH);
+			digitalWrite(PIN_FOR_RELAY_POWER, LOW);
 			delay(100);
 #endif
 			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, HIGH);
@@ -1732,16 +1686,16 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			delay(250);
 			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, HIGH);
 #ifdef SDCARD
-			digitalWrite(PIN_FOR_RELAY_POWER, LOW);
+			digitalWrite(PIN_FOR_RELAY_POWER, HIGH);
 #endif
 
 			result = statusValues::setCloseSuccess;
 			strcpy(statusMqttMessage, STATUS_SET_OPEN_SUCCESS_MQTT_DESC);
-			sprintf(stateAddition, "{\r\n    \"statusValue\": \"%s\"\r\n    \"done\": true\r\n}", statusMqttMessage);
+			sprintf(stateAddition, "{\r\n    \"statusValue\": \"%s\"\r\n    ,\"done\": true\r\n}", statusMqttMessage);
 
 			resultAddToPayload = addToPayload(stateAddition);
 
-			_mqttOpeningClosingManagement = doorState::opening;
+			_mqttOpeningClosingManagement = doorState::doorOpening;
 			_mqttOpeningClosingManagementTimer = millis();
 
 		}
@@ -1754,7 +1708,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 
 			// If using a separate power driver as a result of SD Card usage
 #ifdef SDCARD
-			digitalWrite(PIN_FOR_RELAY_POWER, HIGH);
+			digitalWrite(PIN_FOR_RELAY_POWER, LOW);
 			delay(100);
 #endif
 			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, HIGH);
@@ -1765,15 +1719,15 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			delay(250);
 			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, HIGH);
 #ifdef SDCARD
-			digitalWrite(PIN_FOR_RELAY_POWER, LOW);
+			digitalWrite(PIN_FOR_RELAY_POWER, HIGH);
 #endif	
 			result = statusValues::setStopSuccess;
 			strcpy(statusMqttMessage, STATUS_SET_STOP_SUCCESS_MQTT_DESC);
-			sprintf(stateAddition, "{\r\n    \"statusValue\": \"%s\"\r\n    \"done\": true\r\n}", statusMqttMessage);
+			sprintf(stateAddition, "{\r\n    \"statusValue\": \"%s\"\r\n    ,\"done\": true\r\n}", statusMqttMessage);
 
 			resultAddToPayload = addToPayload(stateAddition);
 
-			_mqttOpeningClosingManagement = doorState::stopped;
+			_mqttOpeningClosingManagement = doorState::doorStopped;
 			_mqttOpeningClosingManagementTimer = millis();
 		}
 
@@ -1787,7 +1741,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Requesting Is Closed");
 			Serial.println(_debugOutput);
 #endif
-			sprintf(stateAddition, "{\r\n    \"closed\": %s\r\n}", _doorState == doorState::closed ? "true" : "false");
+			sprintf(stateAddition, "{\r\n    \"closed\": %s\r\n}", _doorState == doorState::doorClosed ? "true" : "false");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
 		else if (subScription == mqttSubscriptions::requestIsOpen)
@@ -1796,7 +1750,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Requesting Is Open");
 			Serial.println(_debugOutput);
 #endif
-			sprintf(stateAddition, "{\r\n    \"open\": %s\r\n}", _doorState == doorState::open ? "true" : "false");
+			sprintf(stateAddition, "{\r\n    \"open\": %s\r\n}", _doorState == doorState::doorOpen ? "true" : "false");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
 		else if (subScription == mqttSubscriptions::requestIsStopped)
@@ -1805,7 +1759,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Requesting Is Stopped");
 			Serial.println(_debugOutput);
 #endif
-			sprintf(stateAddition, "{\r\n    \"partiallyopen\": %s\r\n}", _doorState == doorState::stopped ? "true" : "false");
+			sprintf(stateAddition, "{\r\n    \"partiallyopen\": %s\r\n}", _doorState == doorState::doorStopped ? "true" : "false");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
 
@@ -1843,17 +1797,6 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(stateAddition, "{\r\n    \"value\": %s\r\n}", pinOpenValue == 1 ? "high" : "low");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
-		else if (subScription == mqttSubscriptions::requestValuePinRelayPower)
-		{
-#ifdef DEBUG
-		sprintf(_debugOutput, "Requesting Value Of Relay Power Pin");
-		Serial.println(_debugOutput);
-#endif
-		pinOpenValue = digitalRead(PIN_FOR_RELAY_POWER);
-		sprintf(stateAddition, "{\r\n    \"value\": %s\r\n}", pinOpenValue == 1 ? "high" : "low");
-		resultAddToPayload = addToPayload(stateAddition);
-		}
-
 
 
 
@@ -1888,16 +1831,6 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
-		else if (subScription == mqttSubscriptions::requestClearValuePinRelayPower)
-		{
-#ifdef DEBUG
-		sprintf(_debugOutput, "Clearing Relay Power Pin");
-		Serial.println(_debugOutput);
-#endif
-		digitalWrite(PIN_FOR_RELAY_POWER, LOW);
-		sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
-		resultAddToPayload = addToPayload(stateAddition);
-		}
 
 		else if (subScription == mqttSubscriptions::requestSetValuePinClose)
 		{
@@ -1929,18 +1862,6 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
-		else if (subScription == mqttSubscriptions::requestSetValuePinRelayPower)
-		{
-#ifdef DEBUG
-		sprintf(_debugOutput, "Setting Relay Power Pin");
-		Serial.println(_debugOutput);
-#endif
-		digitalWrite(PIN_FOR_RELAY_POWER, HIGH);
-		sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
-		resultAddToPayload = addToPayload(stateAddition);
-		}
-
-
 
 
 	}

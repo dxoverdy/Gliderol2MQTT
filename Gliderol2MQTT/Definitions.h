@@ -1,9 +1,10 @@
 /*
 Name:		Definitions.h
-Created:	10/05/2022
+Created:	05/Oct/2022
 Author:		Daniel Young
 
-This file is part of Gliderol2MQTT (G2M) which is private software.
+This file is part of Alpha2MQTT (A2M) which is released under GNU GENERAL PUBLIC LICENSE.
+See file LICENSE or go to https://choosealicense.com/licenses/gpl-3.0/ for full license details.
 
 Notes
 
@@ -22,7 +23,7 @@ Notes
 
 // Update with your Wifi details
 #define WIFI_SSID	"Stardust"
-#define WIFI_PASSWORD	"Sniegulinka1983"
+#define WIFI_PASSWORD	""
 
 // Update with your MQTT Broker details
 #define MQTT_SERVER	"192.168.1.135"
@@ -32,10 +33,7 @@ Notes
 
 // The device name is used as the MQTT base topic and presence on the network.
 // If you need more than one Alpha2MQTT on your network, give them unique names.
-#define DEVICE_NAME "Gliderol2MQTT"
-
-// Comment out if SD Card not used, it will simply bypass the attempts to load from SD Card
-#define SDCARD
+#define DEVICE_NAME "ESP32Gliderol2MQTT"
 
 // If there is a top sensor in use, change this to true.  This will enable 'stop' functionality to be reported correctly
 // as 'stopped' is somewhere between top and bottom after the duration to open or close has elapsed.  Otherwise
@@ -82,7 +80,6 @@ enum mqttSubscriptions
 	requestValuePinClose,
 	requestValuePinOpen,
 	requestValuePinStop,
-	requestValuePinRelayPower,
 
 	requestIsOpen,
 	requestIsClosed,
@@ -91,12 +88,10 @@ enum mqttSubscriptions
 	requestSetValuePinClose,
 	requestSetValuePinOpen,
 	requestSetValuePinStop,
-	requestSetValuePinRelayPower,
 
 	requestClearValuePinClose,
 	requestClearValuePinOpen,
 	requestClearValuePinStop,
-	requestClearValuePinRelayPower,
 
 	setTargetDoorState,
 	getTargetDoorState,
@@ -116,21 +111,21 @@ enum mqttSubscriptions
 #define MQTT_SUB_REQUEST_IS_CLOSED "/request/is/closed"
 #define MQTT_SUB_REQUEST_IS_STOPPED "/request/is/stopped"
 
+
+// For development only
 #define MQTT_SUB_REQUEST_VALUE_PIN_CLOSE "/request/value/pin/close"
 #define MQTT_SUB_REQUEST_VALUE_PIN_STOP "/request/value/pin/stop"
 #define MQTT_SUB_REQUEST_VALUE_PIN_OPEN "/request/value/pin/open"
-#define MQTT_SUB_REQUEST_VALUE_PIN_RELAYPOWER "/request/value/pin/relaypower"
 
-
+// For development only
 #define MQTT_SUB_REQUEST_SET_VALUE_PIN_CLOSE "/request/set/value/pin/close"
 #define MQTT_SUB_REQUEST_SET_VALUE_PIN_STOP "/request/set/value/pin/stop"
 #define MQTT_SUB_REQUEST_SET_VALUE_PIN_OPEN "/request/set/value/pin/open"
-#define MQTT_SUB_REQUEST_SET_VALUE_PIN_RELAYPOWER "/request/set/value/pin/relaypower"
 
+// For development only
 #define MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_CLOSE "/request/clear/value/pin/close"
 #define MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_STOP "/request/clear/value/pin/stop"
 #define MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_OPEN "/request/clear/value/pin/open"
-#define MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_RELAYPOWER "/request/clear/value/pin/relaypower"
 
 
 // MQTT Responses
@@ -141,20 +136,21 @@ enum mqttSubscriptions
 #define MQTT_SUB_RESPONSE_IS_CLOSED "/response/is/closed"
 #define MQTT_SUB_RESPONSE_IS_STOPPED "/response/is/stopped"
 
+
+// For development only
 #define MQTT_SUB_RESPONSE_VALUE_PIN_CLOSE "/response/value/pin/close"
 #define MQTT_SUB_RESPONSE_VALUE_PIN_STOP "/response/value/pin/stop"
 #define MQTT_SUB_RESPONSE_VALUE_PIN_OPEN "/response/value/pin/open"
-#define MQTT_SUB_RESPONSE_VALUE_PIN_RELAYPOWER "/response/value/pin/relaypower"
 
+// For development only
 #define MQTT_SUB_RESPONSE_SET_VALUE_PIN_CLOSE "/response/set/value/pin/close"
 #define MQTT_SUB_RESPONSE_SET_VALUE_PIN_STOP "/response/set/value/pin/stop"
 #define MQTT_SUB_RESPONSE_SET_VALUE_PIN_OPEN "/response/set/value/pin/open"
-#define MQTT_SUB_RESPONSE_SET_VALUE_PIN_RELAYPOWER "/response/set/value/pin/relaypower"
 
+// For development only
 #define MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_CLOSE "/response/clear/value/pin/close"
 #define MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_STOP "/response/clear/value/pin/stop"
 #define MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_OPEN "/response/clear/value/pin/open"
-#define MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_RELAYPOWER "/response/clear/value/pin/relaypower"
 
 
 #define MAX_MQTT_NAME_LENGTH 81
@@ -172,30 +168,31 @@ enum mqttSubscriptions
 
 
 /*
-RJ45 Colour			RJ 45 Pin		Function				ESP8266 Pin
+RJ45 Colour			RJ 45 Pin		Function				ESP32 Pin
 Orange White		1				12V
-Green White			3				Relay 3 (Stop)			D7
-Blue				4				Relay 2 (Down (Close))	D6
-Green				6				Relay 1 (Up (Open)		D5
+Green White			3				Relay 2 (Stop)			GPIO33
+Blue				4				Relay 3 (Down (Close))	GPIO25
+Green				6				Relay 1 (Up (Open)		GPIO32
 Brown				8				GND
 */
 
-#define PIN_FOR_GARAGE_DOOR_STOP D5		// Stop Pin (Relay 3) 
-#define PIN_FOR_GARAGE_DOOR_CLOSE D3	// Down Pin (Relay 2) Close
-#define PIN_FOR_GARAGE_DOOR_OPEN D4		// Up Pin (Relay 1) Open
-#define PIN_FOR_RELAY_POWER D8			// Power Safeguard Relay Power
-#define PIN_FOR_BOTTOM_SENSOR D6 // Closed Sensor
-#define PIN_FOR_TOP_SENSOR D7 // Open Sensor
+#define PIN_FOR_GARAGE_DOOR_OPEN 32		// Up Pin (Relay 1) Open
+#define PIN_FOR_GARAGE_DOOR_STOP 33		// Stop Pin (Relay 2) Stop
+#define PIN_FOR_GARAGE_DOOR_CLOSE 25	// Down Pin (Relay 3) Close
 
+#define PIN_FOR_BOTTOM_SENSOR 26 // Closed Sensor
+#define PIN_FOR_TOP_SENSOR 27 // Open Sensor
+
+#define PIN_FOR_SDCARD_VSPI_CS 5 // Chip Select (VSPI for SD Card)
 
 enum doorState
 {
-	opening,
-	closing,
-	open,
-	closed,
-	stopped,
-	stateUnknown
+	doorOpening,
+	doorClosing,
+	doorOpen,
+	doorClosed,
+	doorStopped,
+	doorStateUnknown
 };
 
 #define DOOR_STATE_OPENING_DESC "Opening"
