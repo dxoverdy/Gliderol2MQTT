@@ -1,2 +1,5 @@
 v1.0
-Initial Release.
+The original development took place during September and October 2022 and was ESP8266 based.
+In December 2023 the project was re-written slightly and rebuilt for an ESP32.
+
+2024-01-12 - Initial Release to public.
