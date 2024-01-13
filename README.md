@@ -567,7 +567,7 @@ Open the Glidermatic, identify the five screw terminals and screw in each of the
 
 
 ### Bottom Sensor Cable
-This cable just acts as a switch to sever (open) or complete (open) a circuit.  Measure a length of cable from where the floor sensor will go back to the Gliderol2MQTT's future home.  Again, pay respects to how you will route the cable back.  Strip back 3cm of outer sheath and trim back 1cm from each of the two wires inside.  Fold them back on each other and twist them.  In a similar nasty approach, leverage two F-F jumper wires and connect two to one side of the cable.  The cable will plug onto B1 and B2 of the Gliderol2MQTT of the Gliderol2MQTT.
+This cable just acts as a switch to sever (open) or complete (close) a circuit.  Measure a length of cable from where the floor sensor will go back to the Gliderol2MQTT's future home.  Again, pay respects to how you will route the cable back.  Strip back 3cm of outer sheath and trim back 1cm from each of the two wires inside.  Fold them back on each other and twist them.  In a similar nasty approach, leverage two F-F jumper wires and connect two to one side of the cable.  The cable will plug onto B1 and B2 of the Gliderol2MQTT of the Gliderol2MQTT.
 
 
 It will look something like this (the blue ones):
@@ -595,7 +595,7 @@ Install the floor sensor by drilling a couple of holes in the floor, snug sized 
 
 
 ### Top Sensor Cable
-This cable just acts as a switch to sever (open) or complete (open) a circuit.  Measure a length of cable from where the top sensor will go back to the Gliderol2MQTT's future home.  Again, pay respects to how you will route the cable back.  Strip back 3cm of outer sheath and trim back 1cm from each of the two wires inside.  Fold them back on each other and twist them.  In a similar nasty approach, leverage two F-F jumper wires and connect two to one side of the cable.  The cable will plug onto T1 and T2 of the Gliderol2MQTT of the Gliderol2MQTT.
+This cable just acts as a switch to sever (open) or complete (close) a circuit.  Measure a length of cable from where the top sensor will go back to the Gliderol2MQTT's future home.  Again, pay respects to how you will route the cable back.  Strip back 3cm of outer sheath and trim back 1cm from each of the two wires inside.  Fold them back on each other and twist them.  In a similar nasty approach, leverage two F-F jumper wires and connect two to one side of the cable.  The cable will plug onto T1 and T2 of the Gliderol2MQTT of the Gliderol2MQTT.
 
 
 It will look something like this (the white ones):
@@ -674,7 +674,7 @@ After uploading, you should see activity on your screen.  Like so:
 <a href="Pics\Assembly\OnBenchWithDisplay.JPG" target="_new"><img src="Pics\Assembly\Small\OnBenchWithDisplay.JPG"/></a>
 
 
-Ideally it will connect to WiFi (confirming those details are right) and connect to MQTT (confirming those details are right) and you should be left with a screen which shows, in effect, a garbage garage door status.  You should see periodic messages on your MQTT broker.  I suggest using [MQTT Explorer](https://mqtt-explorer.com/).  Congratulations.  You are ready to take out to the garage for final setup.
+Ideally it will connect to WiFi (confirming those details are right) and connect to MQTT (confirming those details are right) and you should be left with a screen which shows, in effect, a garbage garage door status.  You should see periodic messages on your MQTT broker.  I suggest using [MQTT Explorer](https://mqtt-explorer.com/).  Try posting an MQTT message to each of the Set Target, Open, Close and Stop topics to ensure the correct relay flashes/clicks.  If everything works, great!  Congratulations.  You are ready to take out to the garage for final setup.
 
 
 
@@ -682,7 +682,7 @@ Ideally it will connect to WiFi (confirming those details are right) and connect
 All the settings you configured in Definitions.h earlier can be put into a text file so that they can be used.  This is useful if several months (or years) pass and you need to update your WiFi or MQTT details, etc.  Use the smallest and cheapest second hand Micro-SD card you can find.  Format it to FAT32 if it isn't already and create an empty text file called settings.txt on it.  Open settings.txt in a text editor and paste the following:
 ```
 {
-	"WIFI_SSID":"Stardust",
+	"WIFI_SSID":"YourWiFiSSIDHere",
 	"WIFI_PASSWORD":"YourPasswordHere",
 	"MQTT_SERVER":"192.168.1.135",
 	"MQTT_PORT":1883,
@@ -692,9 +692,9 @@ All the settings you configured in Definitions.h earlier can be put into a text 
 	"USING_TOP_SENSOR":"Yes",
 	"TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED":10000,
 	"TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN":10000,
-    "NORMALLY_OPEN":"HIGH",
+	"NORMALLY_OPEN":"HIGH",
 	"NORMALLY_CLOSED":"LOW",
-    "BOOT_UP_TARGET_STATE":0
+	"BOOT_UP_TARGET_STATE":0
 }
 ```
 The absence of a Micro-SD card or absence of the settings.txt file will just result in Gliderol2MQTT using the defaults you have burned into the ESP32 as part of the initial programming.  The Micro-SD card is required at all times, that is, the results aren't burned into the ESP32's limited flash memory.  Doing so would create further issues downstream, i.e. how to clear them, etc.
