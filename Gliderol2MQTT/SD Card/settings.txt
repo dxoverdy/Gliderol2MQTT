@@ -1,6 +1,6 @@
 {
-	"WIFI_SSID":"Stardust",
-	"WIFI_PASSWORD":"Sniegulinka1983",
+	"WIFI_SSID":"YourWiFiSSIDHere",
+	"WIFI_PASSWORD":"YourWiFiPasswordHere",
 	"MQTT_SERVER":"192.168.1.135",
 	"MQTT_PORT":1883,
 	"MQTT_USERNAME":"Garage",
