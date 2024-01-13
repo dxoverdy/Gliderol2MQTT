@@ -14,7 +14,7 @@ It's designed to run on an ESP32 microcontroller with a small amount of supporti
 GLIDERMATIC GRD,
 GLIDERMATIC GTS / GTS+,
 *Others models which expose 12V, GND, UP, STOP and DOWN terminals on the PCB will work too.  Be sure to let me know if yours needs adding!
-**There are models which just have a 12V, GND, ST (Start).  Whilst I don't have this model, in theory, Gliderol2MQTT will work just fine, leveraging just one relay for START.  I would love to hear from and work with you if you have model like this so that the project can be refined for you and all.
+**There are models which just have a 12V, GND, ST (Start).  Whilst I don't have this model, in theory, Gliderol2MQTT will work just fine, leveraging just one relay for START.  I would love to hear from and work with you if you have a model like this so that the project can be refined for you and all.
 ```
 
 <a href="Pics/Assembly/Finished2.JPG" target="_new"><img src="Pics/Assembly/Small/Finished2.JPG" alt="Gliderol2MQTT" width="500"/></a>
