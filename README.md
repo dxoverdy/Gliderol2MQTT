@@ -236,6 +236,7 @@ Gliderol2MQTT/request/value/pin/stop, Response via Gliderol2MQTT/response/value/
 Gliderol2MQTT/request/value/pin/open, Response via Gliderol2MQTT/response/value/pin/open
 Gliderol2MQTT/request/value/pin/top_sensor, Response via Gliderol2MQTT/response/value/pin/top_sensor
 Gliderol2MQTT/request/value/pin/bottom_sensor, Response via Gliderol2MQTT/response/value/pin/bottom_sensor
+Gliderol2MQTT/request/value/pin/wake_button, Response via Gliderol2MQTT/response/value/pin/wake_button
 ```
 
 *The set and clear topics below directly energise/release the relays, so they are compiled out by default.  Uncomment `#define ENABLE_DEV_TOPICS` in Definitions.h to enable them.*

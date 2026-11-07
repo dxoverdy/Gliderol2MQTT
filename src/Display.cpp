@@ -127,7 +127,16 @@ namespace display
 		static door::State lastDoorState;
 
 		unsigned long now = millis();
-		bool buttonPressed = (_wakeButton.update(digitalRead(PIN_FOR_DISPLAY_WAKE_BUTTON), now) == LOW);
+		int rawButton = digitalRead(PIN_FOR_DISPLAY_WAKE_BUTTON);
+		bool buttonPressed = (_wakeButton.update(rawButton, now) == LOW);
+
+		// Log every raw change on the wake pin (before debouncing) to help diagnose wiring
+		static int lastRawButton = HIGH;
+		if (rawButton != lastRawButton)
+		{
+			lastRawButton = rawButton;
+			LOG("Wake button pin raw: %s\r\n", rawButton == LOW ? "LOW (pressed)" : "HIGH (released)");
+		}
 
 		if (!initialised)
 		{

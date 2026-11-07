@@ -193,6 +193,7 @@ namespace mqtt_iface
 		const char* onValuePinClose(const char*, char* reply) { pinReply(reply, PIN_FOR_GARAGE_DOOR_CLOSE); return "/response/value/pin/close"; }
 		const char* onValuePinTopSensor(const char*, char* reply) { pinReply(reply, PIN_FOR_TOP_SENSOR); return "/response/value/pin/top_sensor"; }
 		const char* onValuePinBottomSensor(const char*, char* reply) { pinReply(reply, PIN_FOR_BOTTOM_SENSOR); return "/response/value/pin/bottom_sensor"; }
+		const char* onValuePinWakeButton(const char*, char* reply) { pinReply(reply, PIN_FOR_DISPLAY_WAKE_BUTTON); return "/response/value/pin/wake_button"; }
 
 #ifdef ENABLE_DEV_TOPICS
 		// Development: force a relay on ("set" - as if its button were held down) or off ("clear").  A set holds the
@@ -238,6 +239,7 @@ namespace mqtt_iface
 			{ "/request/value/pin/close", false, onValuePinClose },
 			{ "/request/value/pin/top_sensor", false, onValuePinTopSensor },
 			{ "/request/value/pin/bottom_sensor", false, onValuePinBottomSensor },
+			{ "/request/value/pin/wake_button", false, onValuePinWakeButton },
 
 #ifdef ENABLE_DEV_TOPICS
 			{ "/request/set/value/pin/open", true, onSetPinOpen },

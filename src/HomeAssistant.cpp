@@ -118,8 +118,26 @@ namespace homeassistant
 			doc["state_closed"] = "C";
 			doc["state_closing"] = "c";
 			doc["state_stopped"] = "S";
+			// Home Assistant covers have no "stopped" state.  Without a position, HA turns a stop into "closed" if the
+			// door was closing (wrong - it is part open) and "open" otherwise, and then greys out the Open button.
+			// So we also report a rough position from the same topic: closed 0, open 100, anything in between 50.
+			// A stopped door then shows as open at 50%, with both Open and Close available.
+			doc["position_topic"] = topic(buffer, deviceName, "/get/current/door/state");
+			doc["position_template"] = "{{ {'C': 0, 'O': 100}.get(value, 50) }}";
 			addCommon(doc, deviceName, version, macHex, "door");
 			ok = send(doc, "cover", macHex, "door", publish) && ok;
+		}
+
+		// The door state in words, so "Stopped" is visible in HA (the cover itself can only say open or closed)
+		{
+			JsonDocument doc;
+			doc["name"] = "Door status";
+			doc["state_topic"] = topic(buffer, deviceName, "/get/current/door/state");
+			doc["value_template"] =
+				"{{ {'O': 'Open', 'o': 'Opening', 'C': 'Closed', 'c': 'Closing', 'S': 'Stopped'}.get(value, 'Unknown') }}";
+			doc["icon"] = "mdi:garage-variant";
+			addCommon(doc, deviceName, version, macHex, "door_status");
+			ok = send(doc, "sensor", macHex, "door_status", publish) && ok;
 		}
 
 		// Reboot button
