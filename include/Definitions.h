@@ -61,6 +61,10 @@ Notes
   #error "MQTT_PASSWORD is not defined! Please check your private.ini file."
 #endif
 
+#ifndef OTA_PASSWORD
+  #error "OTA_PASSWORD is not defined! Please check your private.ini file."
+#endif
+
 
 
 
@@ -114,6 +118,26 @@ Notes
 #define MQTT_HEADER_SIZE 512
 
 
+
+// A sensor reading must hold steady for this many milliseconds before it is believed.
+// This filters contact bounce and electrical noise on long sensor cables, which would otherwise
+// be reported as the door starting to open/close.
+#define SENSOR_DEBOUNCE_MS 100
+
+// After (re)subscribing, door commands arriving within this window are ignored.
+// A broker re-delivers retained messages on subscribe, and a stray retained "open" command must
+// never actuate the door just because the device reconnected.  Retained commands are also cleared
+// from the broker before subscribing; this is a second line of defence.
+#define COMMAND_IGNORE_AFTER_SUBSCRIBE_MS 1500
+
+// Over-the-air updates.  The OTA password comes from private.ini (ota_password) and the device is
+// reachable for uploads at <DEVICE_NAME>.local - see the [env:nodemcu-32s-ota] section of platformio.ini.
+#define OTA_PORT 3232
+
+// Development-only MQTT topics which directly set/clear the relay pins (request/set/value/pin/* and
+// request/clear/value/pin/*).  These can hold a relay energised indefinitely, so they are compiled out
+// unless you uncomment this.  The read-only request/value/pin/* topics are always available.
+//#define ENABLE_DEV_TOPICS
 
 // For general purpose messaging to the serial port, define DEBUG
 #define DEBUG
@@ -221,7 +245,7 @@ enum mqttSubscriptions
 #define MAX_MQTT_STATUS_LENGTH 51
 #define OLED_CHARACTER_WIDTH 11				// Number of chars which can be displayed per line on the display
 #define SETTING_MAX_WIDTH 64				// Number of chars a JSON setting name can be
-#define SETTINGS_FILE_BUFFER 512			// Total length of JSON settings buffer
+#define SETTINGS_FILE_BUFFER 1024			// Total length of JSON settings buffer (files larger than this are rejected)
 #define DOOR_STATE_MAX_LENGTH 10
 #define DEBUG_MAX_LENGTH 256
 #define MQTT_TOPIC_MAX_LENGTH 256

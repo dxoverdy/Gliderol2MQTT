@@ -201,7 +201,10 @@ Gliderol2MQTT/request/value/pin/stop, Response via Gliderol2MQTT/response/value/
 Gliderol2MQTT/request/value/pin/open, Response via Gliderol2MQTT/response/value/pin/open
 Gliderol2MQTT/request/value/pin/top_sensor, Response via Gliderol2MQTT/response/value/pin/top_sensor
 Gliderol2MQTT/request/value/pin/bottom_sensor, Response via Gliderol2MQTT/response/value/pin/bottom_sensor
+```
 
+*The set and clear topics below directly energise/release the relays, so they are compiled out by default.  Uncomment `#define ENABLE_DEV_TOPICS` in Definitions.h to enable them.*
+```
 Gliderol2MQTT/request/set/value/pin/close, Response via Gliderol2MQTT/request/set/value/pin/close
 Gliderol2MQTT/request/set/value/pin/stop, Response via Gliderol2MQTT/request/set/value/pin/stop
 Gliderol2MQTT/request/set/value/pin/open, Response via Gliderol2MQTT/request/set/value/pin/open
@@ -698,6 +701,23 @@ All the settings you configured in Definitions.h earlier can be put into a text 
 }
 ```
 The absence of a Micro-SD card or absence of the settings.txt file will just result in Gliderol2MQTT using the defaults you have burned into the ESP32 as part of the initial programming.  The Micro-SD card is required at all times, that is, the results aren't burned into the ESP32's limited flash memory.  Doing so would create further issues downstream, i.e. how to clear them, etc.
+
+
+## Over-the-air (OTA) updates
+Once Gliderol2MQTT firmware with OTA support has been flashed over USB *once*, every later update can be sent over WiFi - no need to visit the garage.
+
+1. Add an OTA password to `private.ini` (see `private.ini.example`):
+```
+ota_password = "SomeLongRandomLettersAndDigits"
+```
+2. Flash over USB the first time using the `nodemcu-32s` environment.
+3. From then on, select the `nodemcu-32s-ota` environment (VS Code status bar) and upload, or run:
+```
+pio run -e nodemcu-32s-ota -t upload
+```
+PlatformIO finds the device as `Gliderol2MQTT.local` (your DEVICE_NAME followed by `.local`).  If you change DEVICE_NAME, update `upload_port` in `platformio.ini` to match - or use the device's IP address instead.
+
+During an update all relays are released, the OLED shows progress, and `connection_status` is published as `false`.  The device reboots into the new firmware when the upload completes.  OTA is available from roughly two seconds after boot, including during the "Determine status" wait and while trying to reach the MQTT broker, so a broker problem won't lock you out of remote flashing.
 
 
 # Final Assembly
