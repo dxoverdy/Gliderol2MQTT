@@ -1202,16 +1202,26 @@ void getDoorState()
 
 
 	// So, now we have determined either via FOB or via MQTT that we are opening or closing or stopped....
+	//
+	// A movement ends as soon as the destination sensor confirms arrival, or when the travel time has passed.  If the
+	// travel time passes with the door mid-way (neither sensor), allow MOVEMENT_GRACE_MS more before giving up, in case
+	// the door is just a little slow today - otherwise a door taking 10.5s against a 10s setting flashes up "Stopped"
+	// for a moment before "Open".
+	unsigned long movementElapsed = millis() - _mqttOpeningClosingManagementTimer;
+	unsigned long movementGrace = (_settings.usingTopSensor && isStopped) ? MOVEMENT_GRACE_MS : 0;
+
 	if (_mqttOpeningClosingManagement == doorState::doorOpening)
 	{
-		// There was an MQTT to control or sensor change, which will have set the time of instigation
-		if (checkTimer(&_mqttOpeningClosingManagementTimer, _settings.doorOpenTimeMs))
+		// Arrival at the top can only be confirmed with a top sensor (without one, "open" just means "not closed")
+		bool arrived = _settings.usingTopSensor && isOpen && !isClosed;
+		bool timeUp = movementElapsed >= _settings.doorOpenTimeMs + movementGrace;
+
+		if (arrived || timeUp)
 		{
-			// Dealt with this now as the full time for the door to open has passed, so get rid so isn't processed next time
+			// Dealt with this now - the door has arrived or the time to open has passed - so get rid so isn't processed next time
 			_mqttOpeningClosingManagement = doorState::doorStateUnknown;
 
-			// Timer elapsed to handle an open, so it is presumably stopped, but we will verify that later with sensors
-			// Force a current state MQTT message
+			// The sensors decide the state from here (below).  Force a current state MQTT message
 			_forceMqttOnce = true;
 		}
 		else
@@ -1226,14 +1236,16 @@ void getDoorState()
 	}
 	else if (_mqttOpeningClosingManagement == doorState::doorClosing)
 	{
-		// There was an MQTT to control or sensor change, which will have set the time of instigation
-		if (checkTimer(&_mqttOpeningClosingManagementTimer, _settings.doorCloseTimeMs) || skipDoorCloseTimerDueToFobAndNoTopSensor)
+		// The bottom sensor is always fitted, so arrival at the bottom can always be confirmed
+		bool arrived = isClosed && !isOpen;
+		bool timeUp = movementElapsed >= _settings.doorCloseTimeMs + movementGrace;
+
+		if (arrived || timeUp || skipDoorCloseTimerDueToFobAndNoTopSensor)
 		{
-			// Dealt with this now as the full time for the door to close has passed, so get rid so isn't processed next time
+			// Dealt with this now - the door has arrived or the time to close has passed - so get rid so isn't processed next time
 			_mqttOpeningClosingManagement = doorState::doorStateUnknown;
 
-			// Timer elapsed to handle a close, so it is presumably stopped, but we will verify that later with sensors
-			// Force a current state MQTT message
+			// The sensors decide the state from here (below).  Force a current state MQTT message
 			_forceMqttOnce = true;
 		}
 		else

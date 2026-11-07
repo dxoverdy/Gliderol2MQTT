@@ -30,8 +30,14 @@ Notes
 #define USING_TOP_SENSOR true
 
 // How long the door takes to open from fully closed, and vice versa.  Used for timing the 'Opening' and 'Closing' statuses.
+// Time your door to the moment the sensor clicks and add a second or two.  A movement is reported as finished as soon
+// as the destination sensor confirms arrival, so a generous value costs nothing.
 #define TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED 10000
 #define TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN 10000
+
+// If the travel time above passes with the door mid-way (neither sensor active), keep reporting Opening/Closing for up
+// to this much longer (milliseconds) before reporting Stopped - in case the door is just slow today.  Top sensor only.
+#define MOVEMENT_GRACE_MS 5000
 
 // The GPIO level which switches a relay ON (energised - the equivalent of pressing the Glidermatic button).
 // Relay boards come in two kinds:
