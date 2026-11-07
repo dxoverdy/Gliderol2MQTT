@@ -14,6 +14,8 @@ Wires the modules together and owns the hardware: relays, sensors and WiFi.
 	display			OLED, screen timeout, wake button				include/Display.h
 	ota				over-the-air updates							include/Ota.h
 	bootreport		boot report contents							include/BootReport.h
+	homeassistant	Home Assistant discovery						include/HomeAssistant.h
+	watchdog		reboot if the firmware hangs					include/Watchdog.h
 
 First, go and customise options at the top of Definitions.h, and create include/secrets.h!
 */
@@ -27,6 +29,7 @@ First, go and customise options at the top of Definitions.h, and create include/
 #include "BootReport.h"
 #include "Door.h"
 #include "Debouncer.h"
+#include "Watchdog.h"
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -39,7 +42,7 @@ First, go and customise options at the top of Definitions.h, and create include/
 
 
 // Device parameters
-const char* VERSION = "v2.0";
+const char* VERSION = "v2.1";
 
 // Customisable settings: compiled-in defaults, overridden by the SD card (see Settings.h)
 Settings _settings = settings::defaults();
@@ -163,6 +166,9 @@ void onOtaProgress(uint8_t percent)
 {
 	char line[OLED_CHARACTER_WIDTH];
 
+	// An upload blocks the main loop for its whole duration, so keep the hang watchdog fed as it goes
+	watchdog::feed();
+
 	// Each redraw costs ~25ms of I2C, so only every 5% rather than every 1%
 	if (percent % 5 == 0)
 	{
@@ -270,6 +276,7 @@ void delayServicingNetwork(unsigned long ms)
 	unsigned long start = millis();
 	while (millis() - start < ms)
 	{
+		watchdog::feed();
 		serviceWifi();
 		ota::handle();
 		delay(10);
@@ -386,6 +393,9 @@ void setup()
 	// Serial for debugging
 	Serial.begin(115200);
 
+	// Reboot automatically if the firmware ever hangs (see WATCHDOG_TIMEOUT_S)
+	watchdog::begin(WATCHDOG_TIMEOUT_S);
+
 	// Record why we reset and bump the persistent boot counter (published to MQTT once connected)
 	bootreport::begin();
 
@@ -451,6 +461,9 @@ so the sensors and display stay live through WiFi or broker outages.
 */
 void loop()
 {
+	// Still alive
+	watchdog::feed();
+
 	// Service over-the-air updates first, so a bug further down can't lock us out of remote flashing
 	ota::handle();
 

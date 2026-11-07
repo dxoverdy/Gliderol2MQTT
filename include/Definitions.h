@@ -52,6 +52,12 @@ constexpr int BOOT_TARGET_STATE_CLOSED = 1;
 constexpr int BOOT_TARGET_STATE_OPEN = 2;
 constexpr int BOOT_UP_TARGET_STATE = BOOT_TARGET_STATE_LAST_KNOWN;		// Change this
 
+// Home Assistant MQTT discovery: G2M announces itself so the garage door, a reboot button and diagnostic sensors
+// appear in Home Assistant automatically, with no YAML.  Harmless if you don't run Home Assistant.  Set to false if you
+// have configured G2M by hand in configuration.yaml (otherwise you'll see duplicate entities).
+constexpr bool HOME_ASSISTANT_DISCOVERY = true;
+constexpr const char* HOME_ASSISTANT_DISCOVERY_PREFIX = "homeassistant";		// Home Assistant's default
+
 
 // **************** More Advanced Settings ****************
 // The current state is published (retained) immediately on every change and on every (re)connect, so this periodic
@@ -76,8 +82,8 @@ constexpr unsigned long MQTT_RETRY_INTERVAL = 5000;
 // (milliseconds), start the connection afresh.
 constexpr unsigned long WIFI_RESTART_AFTER_MS = 30000;
 
-// MQTT packet buffer (bytes).  The largest message is the boot report at around 300 bytes.
-constexpr uint16_t MQTT_BUFFER_SIZE = 512;
+// MQTT packet buffer (bytes).  The largest message is the Home Assistant discovery config for the door, ~800 bytes.
+constexpr uint16_t MQTT_BUFFER_SIZE = 1024;
 
 // How often to refresh the relay/sensor lines on the screen (milliseconds)
 constexpr unsigned long DISPLAY_INTERVAL = 250;
@@ -110,6 +116,12 @@ constexpr unsigned long COMMAND_IGNORE_AFTER_SUBSCRIBE_MS = 1500;
 // e.g. HomeKit/MQTT-Thing sending the same target twice - and the Glidermatic button is not pressed a second time.
 // Kept short so a deliberate second press (say, after the door was stopped by the fob) still works.
 constexpr unsigned long REPEAT_COMMAND_WINDOW_MS = 2000;
+
+// If the main loop ever stops running for this long (seconds) - a bug, or a library call that never returns - the
+// ESP32 reboots itself rather than sitting dead in the garage.  The boot report then shows reset_reason "watchdog".
+// Comfortably longer than anything that legitimately blocks (an MQTT connection attempt takes up to ~8s; OTA uploads
+// keep the watchdog fed as they go).
+constexpr uint32_t WATCHDOG_TIMEOUT_S = 30;
 
 // Over-the-air updates.  The OTA password is OTA_PASSWORD in include/secrets.h, and the device is reachable for uploads
 // at <DEVICE_NAME>.local - see the [env:nodemcu-32s-ota] section of platformio.ini.

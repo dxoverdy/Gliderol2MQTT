@@ -13,6 +13,7 @@ See MqttInterface.h for usage.
 #include "Log.h"
 #include "BootReport.h"
 #include "CommandGuard.h"
+#include "HomeAssistant.h"
 
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -43,6 +44,7 @@ namespace mqtt_iface
 		// Topics we publish (suffixes under <DEVICE_NAME>)
 		constexpr const char* TOPIC_CONNECTION_STATUS = "/connection_status";			// Birth and last will
 		constexpr const char* TOPIC_DEVICE_BOOT = "/device/boot";						// Boot report, retained
+		constexpr const char* TOPIC_DEVICE_STATUS = "/device/status";					// Health, retained, every heartbeat
 		constexpr const char* TOPIC_CURRENT_STATE = "/get/current/door/state";			// HomeKit current state, retained
 		constexpr const char* TOPIC_TARGET_STATE = "/get/target/door/state";			// HomeKit target state, retained
 
@@ -72,6 +74,15 @@ namespace mqtt_iface
 				LOG("MQTT publish failed to %s\r\n", topic);
 			}
 			return ok;
+		}
+
+		// Device health: uptime, WiFi signal and memory.  Published on connect and with every heartbeat.
+		void publishStatus()
+		{
+			char status[128];
+			snprintf(status, sizeof(status), "{\"uptime_s\":%lu,\"rssi\":%d,\"free_heap\":%u,\"min_free_heap\":%u}",
+				millis() / 1000, WiFi.RSSI(), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap());
+			publish(TOPIC_DEVICE_STATUS, status, true);
 		}
 
 		void performReply(char* reply, const char* statusValue)
@@ -147,10 +158,10 @@ namespace mqtt_iface
 				performReply(reply, "setCloseSuccess");
 				return RESPONSE_PERFORM_CLOSE;
 			}
-			// MQTT-Thing (or perhaps more HomeKit) doesn't support a target of Stopped, but other tools may send it
+			// HomeKit doesn't support a target of Stopped, but Home Assistant's Stop sends "S" here.  Stop the door, but
+			// leave the target alone - HomeKit only accepts O or C as a target, so echoing "S" would upset MQTT-Thing.
 			if (strcmp(payload, "S") == 0)
 			{
-				publishTargetState("S");
 				_actions.stop();
 				performReply(reply, "setStopSuccess");
 				return RESPONSE_PERFORM_STOP;
@@ -334,13 +345,23 @@ namespace mqtt_iface
 				return false;
 			}
 
+			uint8_t mac[6];
+			char macHex[13];
+			WiFi.macAddress(mac);
+			snprintf(macHex, sizeof(macHex), "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+			// Home Assistant discovery (retained, so re-sending on every connection is harmless)
+			if (HOME_ASSISTANT_DISCOVERY)
+			{
+				homeassistant::publishDiscovery(_settings->deviceName, _version, macHex,
+					[](const char* topic, const char* payload) { return _client.publish(topic, payload, true); });
+			}
+
 			// Once per boot: publish when/why/which firmware we started with (retained, so it's always there to read)
 			if (!_bootReportPublished)
 			{
 				char macText[15];
-				uint8_t mac[6];
-				WiFi.macAddress(mac);
-				snprintf(macText, sizeof(macText), "0x%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+				snprintf(macText, sizeof(macText), "0x%s", macHex);
 
 				char bootReport[320];
 				if (bootreport::toJson(bootReport, sizeof(bootReport), _version, WiFi.localIP().toString().c_str(), macText, WiFi.RSSI()))
@@ -380,6 +401,8 @@ namespace mqtt_iface
 				publish(TOPIC_CURRENT_STATE, _currentState, true);
 			}
 
+			publishStatus();
+
 			return true;
 		}
 	}
@@ -409,7 +432,7 @@ namespace mqtt_iface
 			// Process incoming messages (may run handlers, which may pulse relays)
 			_client.loop();
 
-			// Heartbeat: re-send the current state periodically as a safety net
+			// Heartbeat: re-send the current state periodically as a safety net, along with the device's health
 			if (millis() - lastHeartbeat >= MQTT_STATUS_INTERVAL)
 			{
 				lastHeartbeat = millis();
@@ -417,6 +440,7 @@ namespace mqtt_iface
 				{
 					publish(TOPIC_CURRENT_STATE, _currentState, true);
 				}
+				publishStatus();
 			}
 			return;
 		}

@@ -27,7 +27,7 @@ GLIDERMATIC GTS / GTS+,
 
 
 
-We will run through the communications first, we will then look at building and implementation before finally plumbing it into Homebridge or Home Assistant and demonstrate how it all comes together.  I have been running my Gliderol2MQTT for over a year.  I debated whether to release it to the public because it is such a great device it could have been a small side income stream, however, I ultimately decided to release the design and code to the public.  This is not a two minute project.  It is a weekend fun project which involves everything from a bit of DIY, some easy electronics and a teeny bit of ESP32 flashing in the Arduino IDE.  Have a marathon approach to this project in your head, a sprint will only frustrate you.  I will endeavour to help if you get stuck.  Try email or [Facebook](https://www.facebook.com/mydan100/).
+We will run through the communications first, we will then look at building and implementation before finally plumbing it into Homebridge or Home Assistant and demonstrate how it all comes together.  I have been running my Gliderol2MQTT for over a year.  I debated whether to release it to the public because it is such a great device it could have been a small side income stream, however, I ultimately decided to release the design and code to the public.  This is not a two minute project.  It is a weekend fun project which involves everything from a bit of DIY, some easy electronics and a teeny bit of ESP32 flashing with PlatformIO in Visual Studio Code.  Have a marathon approach to this project in your head, a sprint will only frustrate you.  I will endeavour to help if you get stuck.  Try email or [Facebook](https://www.facebook.com/mydan100/).
 
 
 Enjoy.
@@ -74,6 +74,21 @@ For example:
 - **online_after_ms** - time from power-on to this message.  It includes the "Determine status" wait, so expect a little over your longest door time.
 - **firmware_md5** - fingerprint of the running firmware; it changes with every build, which confirms an OTA update really landed.
 - **rssi** - WiFi signal strength in dBm at boot.  Roughly: above -60 excellent, -60 to -70 good, -70 to -80 weak, below -80 unreliable.
+
+### Device Status
+Every minute (and on connecting), Gliderol2MQTT publishes a retained health report to:
+```
+Gliderol2MQTT/device/status
+```
+For example:
+```
+{"uptime_s":86400,"rssi":-63,"free_heap":201468,"min_free_heap":187952}
+```
+- **uptime_s** - seconds since boot.
+- **rssi** - current WiFi signal strength in dBm (see above).
+- **free_heap** / **min_free_heap** - free memory now, and the lowest it has been since boot.  A steady downward trend over days would point to a memory leak.
+
+If the firmware ever hangs, a watchdog reboots it after 30 seconds, and the boot report then shows `"reset_reason": "watchdog"`.
 
 
 ## Current State
@@ -225,13 +240,13 @@ Gliderol2MQTT/request/value/pin/bottom_sensor, Response via Gliderol2MQTT/respon
 
 *The set and clear topics below directly energise/release the relays, so they are compiled out by default.  Uncomment `#define ENABLE_DEV_TOPICS` in Definitions.h to enable them.*
 ```
-Gliderol2MQTT/request/set/value/pin/close, Response via Gliderol2MQTT/request/set/value/pin/close
-Gliderol2MQTT/request/set/value/pin/stop, Response via Gliderol2MQTT/request/set/value/pin/stop
-Gliderol2MQTT/request/set/value/pin/open, Response via Gliderol2MQTT/request/set/value/pin/open
+Gliderol2MQTT/request/set/value/pin/close, Response via Gliderol2MQTT/response/set/value/pin/close
+Gliderol2MQTT/request/set/value/pin/stop, Response via Gliderol2MQTT/response/set/value/pin/stop
+Gliderol2MQTT/request/set/value/pin/open, Response via Gliderol2MQTT/response/set/value/pin/open
 
-Gliderol2MQTT/request/clear/value/pin/close, Response via Gliderol2MQTT/request/clear/value/pin/close
-Gliderol2MQTT/request/clear/value/pin/stop, Response via Gliderol2MQTT/request/clear/value/pin/stop
-Gliderol2MQTT/request/clear/value/pin/open, Response via Gliderol2MQTT/request/clear/value/pin/open
+Gliderol2MQTT/request/clear/value/pin/close, Response via Gliderol2MQTT/response/clear/value/pin/close
+Gliderol2MQTT/request/clear/value/pin/stop, Response via Gliderol2MQTT/response/clear/value/pin/stop
+Gliderol2MQTT/request/clear/value/pin/open, Response via Gliderol2MQTT/response/clear/value/pin/open
 ```
 
 
@@ -876,7 +891,7 @@ Install it from [here](https://homebridge.io/)
 
 
 ### Installing and Configuring Homebridge MQTT-Thing
-When your Homebridge is up and running, navigate to the Plugins tab at the top and search for Homebridge MQTT-Thing.  This is the nifty plugin which will take what Gliderol posts out and allows your Apple Home to display it.  It also takes the requests from your Apple Home (App or Siri Instruction) to open or close the door.
+When your Homebridge is up and running, navigate to the Plugins tab at the top and search for **Homebridge MQTT-Thing-EX** (`homebridge-mqttthing-ex`) - the maintained fork of the original MQTT-Thing plugin, which is no longer developed.  This is the nifty plugin which will take what Gliderol posts out and allows your Apple Home to display it.  It also takes the requests from your Apple Home (App or Siri Instruction) to open or close the door.
 
 
 When it is installed, it will appear in your list of installed plugins.  Press the cog at the bottom right of the MQTT-Thing plugin and choose Config.  Click + to add a device.  We will be adding a Garage Door Opener.
@@ -900,27 +915,32 @@ Advanced - Online Value: true
 Advanced - Offline Value: false
 ```
 
-Alternatively, if you want the JSON config to paste straight in, click the cog at the bottom right of the Mqttthing plugin and choose JSON Config.  Click + to add a device and paste the following.  Don't forget to modify to suit:
+Alternatively, if you want the JSON config to paste straight in, click the cog at the bottom right of the MQTT-Thing-EX plugin and choose JSON Config, and use the following.  Don't forget to modify to suit:
 ```
 {
-    "type": "garageDoorOpener",
-    "name": "Garage Door",
-    "url": "mqtt://localhost:1883",
-    "username": "Homebridge",
-    "password": "Smart1",
-    "logMqtt": true,
-    "topics": {
-        "getOnline": "Gliderol2MQTT/connection_status",
-        "getCurrentDoorState": "Gliderol2MQTT/get/current/door/state",
-        "getTargetDoorState": "Gliderol2MQTT/get/target/door/state",
-        "setTargetDoorState": "Gliderol2MQTT/set/target/door/state"
-    },
-    "onlineValue": "true",
-    "offlineValue": "false",
-    "confirmationIndicateOffline": true,
-    "accessory": "mqttthing"
+    "platform": "mqttthing-ex",
+    "devices": [
+        {
+            "type": "garageDoorOpener",
+            "name": "Garage Door",
+            "url": "mqtt://localhost:1883",
+            "username": "YOUR_MQTT_USERNAME",
+            "password": "YOUR_MQTT_PASSWORD",
+            "logMqtt": true,
+            "topics": {
+                "getOnline": "Gliderol2MQTT/connection_status",
+                "getCurrentDoorState": "Gliderol2MQTT/get/current/door/state",
+                "getTargetDoorState": "Gliderol2MQTT/get/target/door/state",
+                "setTargetDoorState": "Gliderol2MQTT/set/target/door/state"
+            },
+            "onlineValue": "true",
+            "offlineValue": "false",
+            "confirmationIndicateOffline": true
+        }
+    ]
 }
 ```
+HomeKit occasionally sends the same command twice in quick succession; Gliderol2MQTT recognises a repeat within two seconds and doesn't press the Glidermatic button a second time.
 
 When you open the Home app on your iPhone it will detect the presence of your garage door and invite you to add it to your home.  Do so.  You can then control the garage door.
 
@@ -950,7 +970,15 @@ Install it from [here](https://www.home-assistant.io/)
 
 
 ### Configuring Home Assistant
-To get functional garage door in Home Assistant, I have created the following entities you should add to your configuration.yaml:
+**Nothing to configure.**  Gliderol2MQTT uses Home Assistant's MQTT discovery: as long as Home Assistant's MQTT integration is connected to the same broker, a **Gliderol2MQTT** device appears automatically (Settings / Devices & Services / MQTT) with:
+- **Door** - a garage door with Open, Close and Stop, showing Open / Opening / Closed / Closing
+- **Reboot** - a button which reboots Gliderol2MQTT
+- **WiFi signal**, **Free memory**, **Last boot** and **Last reset reason** - diagnostic sensors
+
+To turn discovery off, set `HOME_ASSISTANT_DISCOVERY` to false in Definitions.h.
+
+### Manual Home Assistant configuration
+Only needed if you have turned discovery off.  (If you configured Gliderol2MQTT by hand before discovery existed, either remove this YAML or turn discovery off, otherwise you'll see each entity twice.)  To get functional garage door in Home Assistant, I have created the following entities you should add to your configuration.yaml:
 ```
 mqtt:
   - button:
@@ -1125,6 +1153,21 @@ In December 2023 the project was re-written slightly and rebuilt for an ESP32.
 
 ## v2.0
 2026-11-07 - Refactored for platform.io in Visual Studio Code.
+
+## v2.1
+2026-11-07 - Major overhaul.
+- Over-the-air (OTA) firmware updates.
+- Safety: relays held released from power-on; retained MQTT commands can no longer act on reconnect; repeated commands don't press the button twice; sensors debounced.
+- Door state is sensor-led: Open/Closed is reported the moment the destination sensor confirms it, with a grace period before Stopped.
+- Keeps running through WiFi/broker outages, reconnecting in the background.
+- SD card settings parsed with ArduinoJson (WiFi names and passwords may contain any characters); `RELAY_ACTIVE_LEVEL` replaces `NORMALLY_OPEN`/`NORMALLY_CLOSED`.
+- New topics: `request/perform/reboot`, `device/boot`, `device/status`.
+- Home Assistant MQTT discovery.
+- Screen timeout and optional wake button to extend OLED life.
+- Hang watchdog.
+- Credentials in a git-ignored `include/secrets.h`.
+- Code split into modules, with unit tests for the door logic (`pio test -e native`).
+- MQTT replies are now compact JSON.
 
 
 
