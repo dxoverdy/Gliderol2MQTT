@@ -1062,6 +1062,19 @@ If you build your own Gliderol2MQTT, be sure to send me pictures of it in action
 If you come up with any nifty developments in any home automation tool and would like them included here for the benefit of all, feel free to send me details, instructions, code samples or images and I will ensure they are added to this page with due credit.
 
 
+# Version History
+## v1.0
+The original development took place during September and October 2022 and was ESP8266 based.
+In December 2023 the project was re-written slightly and rebuilt for an ESP32.
+
+2024-01-12 - Initial Release to public.
+
+## v2.0
+2026-11-07 - Refactored for platform.io in Visual Studio Code.
+
+
+
+
 # Gliderol Credits
 Gliderol / Glidermatic are trademarks of Gliderol Roller Doors Pty. Ltd.
 

@@ -24,8 +24,12 @@ First, go and customise options at the top of Definitions.h!
 
 #include <SD.h>
 
+// Helper macros to turn raw text definitions into true C++ strings to help with injection from platformio's build process
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+
 // Device parameters
-char _version[6] = "v1.0";
+char _version[6] = "v2.0";
 
 // WiFi parameters
 WiFiClient _wifi;
@@ -51,12 +55,12 @@ char _oledLine4[OLED_CHARACTER_WIDTH] = "";
 
 
 // Customisable settings
-char _wifiSSID[SETTING_MAX_WIDTH] = WIFI_SSID;
-char _wifiPassword[SETTING_MAX_WIDTH] = WIFI_PASSWORD;
-char _mqttServer[SETTING_MAX_WIDTH] = MQTT_SERVER;
+char _wifiSSID[SETTING_MAX_WIDTH] = TOSTRING(WIFI_SSID);
+char _wifiPassword[SETTING_MAX_WIDTH] = TOSTRING(WIFI_PASSWORD);
+char _mqttServer[SETTING_MAX_WIDTH] = TOSTRING(MQTT_BROKER);
 int _mqttPort = MQTT_PORT;
-char _mqttUsername[SETTING_MAX_WIDTH] = MQTT_USERNAME;
-char _mqttPassword[SETTING_MAX_WIDTH] = MQTT_PASSWORD;
+char _mqttUsername[SETTING_MAX_WIDTH] = TOSTRING(MQTT_USERNAME);
+char _mqttPassword[SETTING_MAX_WIDTH] = TOSTRING(MQTT_PASSWORD);
 char _deviceName[SETTING_MAX_WIDTH] = DEVICE_NAME;
 bool _usingTopSensor = USING_TOP_SENSOR;
 int _doorCloseTime = TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN;
@@ -101,7 +105,18 @@ Adafruit_SH1106G _display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire,
 
 
 
-
+/*
+Prototypes
+*/
+void mqttReconnect();
+statusValues addToPayload(const char* addition);
+void sendMqtt(char* topic, bool retain);
+void updateOLED(bool justStatus, const char* line2, const char* line3, const char* line4);
+void emptyPayload();
+void getDoorState();
+void setupWifi();
+void updateRunstate();
+void mqttCallback(char* topic, byte* message, unsigned int length);
 
 
 /*
@@ -1975,7 +1990,7 @@ addToPayload()
 
 Safely adds some contents to the payload buffer.
 */
-statusValues addToPayload(char* addition)
+statusValues addToPayload(const char* addition)
 {
 	int targetRequestedSize = strlen(_mqttPayload) + strlen(addition);
 

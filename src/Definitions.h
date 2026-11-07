@@ -14,23 +14,8 @@ Notes
 #ifndef _DEFINITIONS_h
 #define _DEFINITIONS_h
 
-#if defined(ARDUINO) && ARDUINO >= 100
-	#include "arduino.h"
-#else
-	#include "WProgram.h"
-#endif
 
 // **************** Friendly Settings ****************
-// Update with your Wifi details
-#define WIFI_SSID "Stardust_EXT"
-#define WIFI_PASSWORD ""
-
-// Update with your MQTT Broker details
-#define MQTT_SERVER	"192.168.1.135"
-#define MQTT_PORT 1883
-#define MQTT_USERNAME "Garage"
-#define MQTT_PASSWORD "DoorOpener1"
-
 // The device name is used as the MQTT base topic and presence on the network.
 // If you need more than one Gliderol2MQTT on your network, give them unique names.
 #define DEVICE_NAME "Gliderol2MQTT"
@@ -49,6 +34,34 @@ Notes
 // Depending on the type you have, swap HIGH and LOW here.
 #define NORMALLY_OPEN HIGH
 #define NORMALLY_CLOSED LOW
+
+
+// Check if the compiler flags were passed correctly from platformio.ini
+#ifndef WIFI_SSID
+  #error "WIFI_SSID is not defined! Please check your private.ini file."
+#endif
+
+#ifndef WIFI_PASSWORD
+  #error "WIFI_PASSWORD is not defined! Please check your private.ini file."
+#endif
+
+#ifndef MQTT_BROKER
+  #error "MQTT_BROKER is not defined! Please check your private.ini file."
+#endif
+
+#ifndef MQTT_PORT
+  #error "MQTT_PORT is not defined! Please check your private.ini file."
+#endif
+
+#ifndef MQTT_USERNAME
+  #error "MQTT_USERNAME is not defined! Please check your private.ini file."
+#endif
+
+#ifndef MQTT_PASSWORD
+  #error "MQTT_PASSWORD is not defined! Please check your private.ini file."
+#endif
+
+
 
 
 // On boot up you have a choice to either
