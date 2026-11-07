@@ -66,8 +66,8 @@ char _deviceName[SETTING_MAX_WIDTH] = DEVICE_NAME;
 bool _usingTopSensor = USING_TOP_SENSOR;
 int _doorCloseTime = TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN;
 int _doorOpenTime = TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED;
-int _normallyOpen = NORMALLY_OPEN;
-int _normallyClosed = NORMALLY_CLOSED;
+int _relayActiveLevel = RELAY_ACTIVE_LEVEL;							// Pin level which switches a relay on (button pressed)
+int _relayIdleLevel = (RELAY_ACTIVE_LEVEL == HIGH) ? LOW : HIGH;		// Always the opposite - pin level which releases a relay
 int _bootUpTargetState = BOOT_UP_TARGET_STATE;
 
 // When _forceMqttOnce = true, will force a one time MQTT publish of current state outside of the typical timer
@@ -173,9 +173,9 @@ void setup()
 	// FIRST, before anything else: drive the relay pins to their released state.  Until pinMode() is called the
 	// pins float, and what a floating input does to the relay board is undefined.  These use the compiled-in
 	// polarity - the SD card hasn't been read yet - and are re-applied below once settings are known.
-	digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, NORMALLY_CLOSED);
-	digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, NORMALLY_CLOSED);
-	digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, NORMALLY_CLOSED);
+	digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayIdleLevel);
+	digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayIdleLevel);
+	digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayIdleLevel);
 	pinMode(PIN_FOR_GARAGE_DOOR_CLOSE, OUTPUT);
 	pinMode(PIN_FOR_GARAGE_DOOR_OPEN, OUTPUT);
 	pinMode(PIN_FOR_GARAGE_DOOR_STOP, OUTPUT);
@@ -260,8 +260,7 @@ File Format:
 	"USING_TOP_SENSOR":"Yes",
 	"TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED":10000,
 	"TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN":10000,
-	"NORMALLY_OPEN": "HIGH",
-	"NORMALLY_CLOSED": "LOW",
+	"RELAY_ACTIVE_LEVEL": "HIGH",
 	"BOOT_UP_TARGET_STATE" : 0
 }
 			*/
@@ -478,26 +477,18 @@ File Format:
 						Serial.println(_doorOpenTime);
 #endif
 					}
-					else if (strncmp(pairNameClean, "NORMALLY_OPEN", SETTING_MAX_WIDTH) == 0)
+					else if (strncmp(pairNameClean, "RELAY_ACTIVE_LEVEL", SETTING_MAX_WIDTH) == 0 || strncmp(pairNameClean, "NORMALLY_OPEN", SETTING_MAX_WIDTH) == 0)
 					{
+						// NORMALLY_OPEN is the old name for this setting, still accepted so existing SD cards keep working.
+						// (The old NORMALLY_CLOSED key is ignored - the idle level is always the opposite of the active level.)
 #ifdef DEBUG
-						sprintf(_debugOutput, "Got NORMALLY_OPEN, setting to \"%s\"", pairValueClean);
+						sprintf(_debugOutput, "Got %s, setting relay active level to \"%s\"", pairNameClean, pairValueClean);
 						Serial.println(_debugOutput);
 #endif
-						_normallyOpen = strncmp(pairValueClean, "HIGH", SETTING_MAX_WIDTH) == 0 ? HIGH : LOW;
+						_relayActiveLevel = strncmp(pairValueClean, "HIGH", SETTING_MAX_WIDTH) == 0 ? HIGH : LOW;
+						_relayIdleLevel = (_relayActiveLevel == HIGH) ? LOW : HIGH;
 #ifdef DEBUG_LEVEL2
-						Serial.println(_normallyOpen);
-#endif
-					}
-					else if (strncmp(pairNameClean, "NORMALLY_CLOSED", SETTING_MAX_WIDTH) == 0)
-					{
-#ifdef DEBUG
-						sprintf(_debugOutput, "Got NORMALLY_CLOSED, setting to \"%s\"", pairValueClean);
-						Serial.println(_debugOutput);
-#endif
-						_normallyClosed = strncmp(pairValueClean, "HIGH", SETTING_MAX_WIDTH) == 0 ? HIGH : LOW;
-#ifdef DEBUG_LEVEL2
-						Serial.println(_normallyClosed);
+						Serial.println(_relayActiveLevel);
 #endif
 					}
 					else if (strncmp(pairNameClean, "BOOT_UP_TARGET_STATE", SETTING_MAX_WIDTH) == 0)
@@ -775,6 +766,10 @@ cleanSession boolean (optional) - whether to connect clean-session or not
 
 			if (connectedAndSetupSuccessfully)
 			{
+				// Publish the current state straight away rather than waiting for the periodic heartbeat - the broker
+				// may have restarted and lost its retained copy.
+				_forceMqttOnce = true;
+
 				// Connected, so ditch out with runstate on the screen
 				updateRunstate();
 				break;
@@ -914,13 +909,13 @@ void delayServicingOta(unsigned long ms)
 /*
 releaseAllRelays()
 
-Put all three relays into their released (normally closed) state.
+Put all three relays into their released (idle) state.
 */
 void releaseAllRelays()
 {
-	digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _normallyClosed);
-	digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _normallyClosed);
-	digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _normallyClosed);
+	digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayIdleLevel);
+	digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayIdleLevel);
+	digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayIdleLevel);
 }
 
 
@@ -1907,14 +1902,14 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 #endif
 
 			// Ensure OPEN/STOP relays are closed
-			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _normallyClosed);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayIdleLevel);
 			delay(50);
-			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _normallyClosed);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayIdleLevel);
 			delay(50);
 			// And for quarter of a second, open the CLOSE relay
-			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _normallyOpen);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayActiveLevel);
 			delay(250);
-			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _normallyClosed);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayIdleLevel);
 
 			result = statusValues::setCloseSuccess;
 			strcpy(statusMqttMessage, STATUS_SET_CLOSE_SUCCESS_MQTT_DESC);
@@ -1935,14 +1930,14 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 #endif
 
 			// Ensure CLOSE/STOP relays are closed
-			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _normallyClosed);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayIdleLevel);
 			delay(50);
-			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _normallyClosed);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayIdleLevel);
 			delay(50);
 			// And for quarter of a second, open the OPEN relay
-			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _normallyOpen);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayActiveLevel);
 			delay(250);
-			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _normallyClosed);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayIdleLevel);
 
 
 			result = statusValues::setOpenSuccess;
@@ -1965,14 +1960,14 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 #endif
 
 			// Ensure CLOSE/OPEN relays are closed
-			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _normallyClosed);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayIdleLevel);
 			delay(50);
-			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _normallyClosed);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayIdleLevel);
 			delay(50);
 			// And for quarter of a second, open the STOP relay
-			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _normallyOpen);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayActiveLevel);
 			delay(250);
-			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _normallyClosed);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayIdleLevel);
 
 			result = statusValues::setStopSuccess;
 			strcpy(statusMqttMessage, STATUS_SET_STOP_SUCCESS_MQTT_DESC);
@@ -2084,7 +2079,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Clearing Close Pin");
 			Serial.println(_debugOutput);
 #endif
-			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _normallyClosed);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayIdleLevel);
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
@@ -2094,7 +2089,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Clearing Stop Pin");
 			Serial.println(_debugOutput);
 #endif
-			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _normallyClosed);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayIdleLevel);
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
@@ -2104,7 +2099,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Clearing Open Pin");
 			Serial.println(_debugOutput);
 #endif
-			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _normallyClosed);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayIdleLevel);
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
@@ -2115,7 +2110,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Setting Close Pin");
 			Serial.println(_debugOutput);
 #endif
-			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _normallyOpen);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayActiveLevel);
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
@@ -2125,7 +2120,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Setting Stop Pin");
 			Serial.println(_debugOutput);
 #endif
-			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _normallyOpen);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayActiveLevel);
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
@@ -2135,7 +2130,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Setting Open Pin");
 			Serial.println(_debugOutput);
 #endif
-			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _normallyOpen);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayActiveLevel);
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}

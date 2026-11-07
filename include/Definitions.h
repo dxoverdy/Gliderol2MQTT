@@ -29,11 +29,13 @@ Notes
 #define TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED 10000
 #define TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN 10000
 
-// My relay board flips relays from normally closed to normally open when a 3.3V signal (HIGH) is received from the ESP32.
-// But I have historically used relays which are normally closed when HIGH and flip to normally open when LOW.
-// Depending on the type you have, swap HIGH and LOW here.
-#define NORMALLY_OPEN HIGH
-#define NORMALLY_CLOSED LOW
+// The GPIO level which switches a relay ON (energised - the equivalent of pressing the Glidermatic button).
+// Relay boards come in two kinds:
+//   Active-high: the relay switches on when the ESP32 pin is HIGH (3.3V).  My current board is this kind.
+//   Active-low:  the relay switches on when the ESP32 pin is LOW (GND).  Many cheap optocoupler boards are this kind.
+// The idle (off) level is always the opposite, so there is only one setting.
+// SD card key: "RELAY_ACTIVE_LEVEL":"HIGH" or "LOW".  (The old "NORMALLY_OPEN" key is still accepted and means the same.)
+#define RELAY_ACTIVE_LEVEL HIGH
 
 
 // Check if the compiler flags were passed correctly from platformio.ini
@@ -87,14 +89,15 @@ Notes
 
 // **************** More Advanced Settings ****************
 // How often the status of the door is sent out
-// 5 seconds is probably overkill given statuses are updated on demand and there is the birth and last will and testament
-// But... given the relatively tiny demand on both the ESP32 and home network I am happy with it.
-#define MQTT_STATUS_INTERVAL 5000
+// The current state is published (retained) immediately on every change and on every (re)connect, so this periodic
+// re-send is only a heartbeat/safety net - e.g. for a broker restarted without persistence.  Once a minute is plenty.
+#define MQTT_STATUS_INTERVAL 60000
 
 // "Sets the keep alive interval used by the client." (seconds)
-// The library default is 15 however with this project carrying the security of a door I am using 5 seconds
-// As in, if offline for 5 seconds, the MQTT broker will indicate the device is offline and send out the last will and testament.
-#define MQTT_KEEP_ALIVE 5
+// The broker declares us offline (and publishes the last will and testament) after 1.5 x this with no contact, so
+// 15 means ~22 seconds.  Shorter values make brief WiFi blips show as "No Response" in HomeKit and force a full
+// reconnect, without making the door any safer - offline is offline.  15 is the library default.
+#define MQTT_KEEP_ALIVE 15
 
 // "Sets the socket timeout used by the client. This determines how long the client will wait for incoming data when it expects data to arrive - for example, whilst it is in the middle of reading an MQTT packet." (seconds)
 // Library default is 15 however with this project carrying the security of a door I am using 5

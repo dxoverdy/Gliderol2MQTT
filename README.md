@@ -38,7 +38,7 @@ Enjoy.
 
 # MQTT Communication
 ## Connection Established / Dropped
-Gliderol2MQTT needs WiFi access and a connection to an MQTT broker to work.  If MQTT communication is lost for five seconds due to patchy WiFi or network outage, Gliderol2MQTT will show as offline.  But rest assured, Gliderol2MQTT will always endeavour to reconnect to both WiFi and MQTT as soon as possible.  Use the following MQTT topic for Birth and Last Will and Testament, which you can use to indicate to HomeKit and Home Assistant that the device is online or offline:
+Gliderol2MQTT needs WiFi access and a connection to an MQTT broker to work.  If MQTT communication is lost for around 20 seconds (1.5 x the 15 second keep-alive) due to patchy WiFi or network outage, Gliderol2MQTT will show as offline.  But rest assured, Gliderol2MQTT will always endeavour to reconnect to both WiFi and MQTT as soon as possible.  Use the following MQTT topic for Birth and Last Will and Testament, which you can use to indicate to HomeKit and Home Assistant that the device is online or offline:
 ```
 Gliderol2MQTT/connection_status
 ```
@@ -51,7 +51,7 @@ true
 Where true means Gliderol2MQTT is online.  Gliderol2MQTT is assumed as online from then on - until communication is lost.
 
 ### Last Will and Testament
-As stated, when MQTT communication is lost for five seconds, your MQTT broker will send out the Last Will and Testament for Gliderol2MQTT.  It is a retained MQTT message to Gliderol2MQTT/connection_status with the following payload:
+As stated, when MQTT communication is lost for around 20 seconds, your MQTT broker will send out the Last Will and Testament for Gliderol2MQTT.  It is a retained MQTT message to Gliderol2MQTT/connection_status with the following payload:
 ```
 false
 ```
@@ -64,7 +64,7 @@ The MQTT topic to subscribe to is:
 Gliderol2MQTT/get/current/door/state
 ```
 ### get/current/door/state
-To keep your home automation tools informed as to your garage door's current state, Gliderol2MQTT publishes this topic every five seconds.  This topic is also published on demand when there is either a change of floor sensor or top sensor state, or when you tell Gliderol2MQTT to do something.  For example, if you instruct Gliderol2MQTT to open the door via an MQTT message, the topic will be published immediately.  If there is a change in door state by way of using the keyfob or push button on the Glidermatic, it will likewise publish the topic immediately.   To take two real life examples a bit further, if you send Gliderol2MQTT a message to shut the door, this will return 'c' (Closing) for a time period* and then, if the door has fully shut, return 'C' (Closed) from then on.  Similarly, if you use the fob to open the door from a fully closed position, this will return 'o' (Opening) for a time period* and then, if the door has fully opened, return 'O' (Open) from then on.  If the door has not reached its target state by the end of the time period* it will report 'S' (Stopped).
+To keep your home automation tools informed as to your garage door's current state, Gliderol2MQTT publishes this topic every minute and whenever it (re)connects to the broker.  This topic is also published on demand when there is either a change of floor sensor or top sensor state, or when you tell Gliderol2MQTT to do something.  For example, if you instruct Gliderol2MQTT to open the door via an MQTT message, the topic will be published immediately.  If there is a change in door state by way of using the keyfob or push button on the Glidermatic, it will likewise publish the topic immediately.   To take two real life examples a bit further, if you send Gliderol2MQTT a message to shut the door, this will return 'c' (Closing) for a time period* and then, if the door has fully shut, return 'C' (Closed) from then on.  Similarly, if you use the fob to open the door from a fully closed position, this will return 'o' (Opening) for a time period* and then, if the door has fully opened, return 'O' (Open) from then on.  If the door has not reached its target state by the end of the time period* it will report 'S' (Stopped).
 
 ```
 o - The door is currently Opening.
@@ -646,8 +646,7 @@ Configure your Gliderol2MQTT by opening up Definitions.h and verifying/customisi
 - Set USING_TOP_SENSOR to true if you are using the top sensor, otherwise change to false
 - Set TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED to the number of milliseconds it takes your garage door to go from fully open to fully closed.  Essentially, start it opening and count how long before it reaches the top.  Add one second for tolerance.  I found 10 seconds (10000) was great for my door.  In effect, when you open the garage door with an MQTT message or when Gliderol2MQTT senses it is opening thanks to a change in the bottom sensor, Gliderol2MQTT will reporting Opening for this period of time before falling back to inform based on what the sensors are saying
 - Set TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN to the number of milliseconds it takes your garage door to go from fully closed to fully open.  Essentially, start it closing and count how long before it reaches the bottom.  Add one second for tolerance.  I found 10 seconds (10000) was great for my door.  In effect, when you close the garage door with an MQTT message or when Gliderol2MQTT senses it is opening thanks to a change in the top sensor, Gliderol2MQTT will reporting Closing for this period of time before falling back to inform based on what the sensors are saying
-- Set NORMALLY_OPEN to HIGH if your relay board flips to a normally open (NO) state when 3.3V (HIGH) is received.  If your relay flips to a normally open (NO) state when GND (LOW) is received set to LOW.
-- Set NORMALLY_CLOSED to LOW if your relay board flips to a normally closed (NC) state when GND (LOW) is received.  If your relay flips to a normally closed (NC) state when 3.3V (HIGH) is received set to HIGH.
+- Set RELAY_ACTIVE_LEVEL to the ESP32 pin level which switches your relays on.  HIGH (the default) if your relay board is active-high, i.e. a relay clicks on when it receives 3.3V; LOW if it is active-low, i.e. a relay clicks on when its input is pulled to GND.  (Older versions used a NORMALLY_OPEN / NORMALLY_CLOSED pair; NORMALLY_OPEN is still accepted on the SD card and means the same thing.)
 - Set BOOT_UP_TARGET_STATE to 0 if you want, on boot up, Gliderol2MQTT to leave the last known retained target state in the MQTT broker as is (default), set to 1 if you wish to post a target state of Closed on boot up or set to 2 if you wish to post a target state of Open on boot up.
 ```
 
@@ -695,8 +694,7 @@ All the settings you configured in Definitions.h earlier can be put into a text 
 	"USING_TOP_SENSOR":"Yes",
 	"TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED":10000,
 	"TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN":10000,
-	"NORMALLY_OPEN":"HIGH",
-	"NORMALLY_CLOSED":"LOW",
+	"RELAY_ACTIVE_LEVEL":"HIGH",
 	"BOOT_UP_TARGET_STATE":0
 }
 ```
