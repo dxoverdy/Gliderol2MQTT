@@ -194,6 +194,7 @@ namespace door
 		_movement = Movement::Opening;
 		_movementStartMs = nowMs;
 		_publishPending = true;
+		recordCommand(Command::Open, nowMs);
 	}
 
 	void Door::commandClose(unsigned long nowMs)
@@ -201,6 +202,7 @@ namespace door
 		_movement = Movement::Closing;
 		_movementStartMs = nowMs;
 		_publishPending = true;
+		recordCommand(Command::Close, nowMs);
 	}
 
 	void Door::commandStop(unsigned long nowMs)
@@ -208,6 +210,20 @@ namespace door
 		_movement = Movement::Stopped;
 		_movementStartMs = nowMs;
 		_publishPending = true;
+		recordCommand(Command::Stop, nowMs);
+	}
+
+	bool Door::isRepeat(Command command, unsigned long nowMs, unsigned long windowMs) const
+	{
+		// Unsigned subtraction handles millis() wrapping
+		return _hasLastCommand && command == _lastCommand && nowMs - _lastCommandMs < windowMs;
+	}
+
+	void Door::recordCommand(Command command, unsigned long nowMs)
+	{
+		_hasLastCommand = true;
+		_lastCommand = command;
+		_lastCommandMs = nowMs;
 	}
 
 

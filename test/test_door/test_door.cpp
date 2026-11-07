@@ -275,6 +275,39 @@ void test_movement_timer_survives_millis_wrapping()
 }
 
 
+// ---------------------------------------------------------------- Repeated commands
+
+void test_same_command_twice_in_quick_succession_is_a_repeat()
+{
+	// The real-world case from the Homebridge logs: MQTT-Thing sent "O" twice within a second
+	Door d(WITH_TOP);
+	d.commandOpen(1000);
+	TEST_ASSERT_TRUE(d.isRepeat(Door::Command::Open, 1400, 2000));
+}
+
+void test_same_command_after_the_window_is_not_a_repeat()
+{
+	// e.g. the door was stopped by the fob and the user presses Open again
+	Door d(WITH_TOP);
+	d.commandOpen(1000);
+	TEST_ASSERT_FALSE(d.isRepeat(Door::Command::Open, 3000, 2000));
+}
+
+void test_a_different_command_is_never_a_repeat()
+{
+	Door d(WITH_TOP);
+	d.commandOpen(1000);
+	TEST_ASSERT_FALSE(d.isRepeat(Door::Command::Stop, 1100, 2000));
+	TEST_ASSERT_FALSE(d.isRepeat(Door::Command::Close, 1100, 2000));
+}
+
+void test_first_command_is_never_a_repeat()
+{
+	Door d(WITH_TOP);
+	TEST_ASSERT_FALSE(d.isRepeat(Door::Command::Open, 0, 2000));
+}
+
+
 // ---------------------------------------------------------------- Debouncer
 
 void test_debouncer_trusts_the_first_reading()
@@ -339,6 +372,10 @@ int main()
 	RUN_TEST(test_no_top_sensor_fob_close_is_reported_on_arrival);
 	RUN_TEST(test_no_top_sensor_never_reports_stopped);
 	RUN_TEST(test_movement_timer_survives_millis_wrapping);
+	RUN_TEST(test_same_command_twice_in_quick_succession_is_a_repeat);
+	RUN_TEST(test_same_command_after_the_window_is_not_a_repeat);
+	RUN_TEST(test_a_different_command_is_never_a_repeat);
+	RUN_TEST(test_first_command_is_never_a_repeat);
 	RUN_TEST(test_debouncer_trusts_the_first_reading);
 	RUN_TEST(test_debouncer_ignores_a_short_glitch);
 	RUN_TEST(test_debouncer_accepts_a_change_held_long_enough);

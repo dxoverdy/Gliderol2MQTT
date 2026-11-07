@@ -106,6 +106,11 @@ constexpr unsigned long BUTTON_DEBOUNCE_MS = 30;
 // subscribing; this is a second line of defence.
 constexpr unsigned long COMMAND_IGNORE_AFTER_SUBSCRIBE_MS = 1500;
 
+// The same door command (open/close/stop) arriving again within this window (milliseconds) is treated as a repeat -
+// e.g. HomeKit/MQTT-Thing sending the same target twice - and the Glidermatic button is not pressed a second time.
+// Kept short so a deliberate second press (say, after the door was stopped by the fob) still works.
+constexpr unsigned long REPEAT_COMMAND_WINDOW_MS = 2000;
+
 // Over-the-air updates.  The OTA password is OTA_PASSWORD in include/secrets.h, and the device is reachable for uploads
 // at <DEVICE_NAME>.local - see the [env:nodemcu-32s-ota] section of platformio.ini.
 constexpr uint16_t OTA_PORT = 3232;

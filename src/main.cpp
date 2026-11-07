@@ -90,20 +90,38 @@ void pulseRelay(uint8_t pin)
 Actions for the MQTT interface
 */
 
+// Each action skips pressing the button if the same command was given moments ago (see REPEAT_COMMAND_WINDOW_MS) -
+// HomeKit/MQTT-Thing sometimes sends the same target twice in quick succession.
+
 void actionOpen()
 {
+	if (_door.isRepeat(door::Door::Command::Open, millis(), REPEAT_COMMAND_WINDOW_MS))
+	{
+		LOG("Repeat open command within %lu ms - not pressing the button again\r\n", REPEAT_COMMAND_WINDOW_MS);
+		return;
+	}
 	pulseRelay(PIN_FOR_GARAGE_DOOR_OPEN);
 	_door.commandOpen(millis());
 }
 
 void actionClose()
 {
+	if (_door.isRepeat(door::Door::Command::Close, millis(), REPEAT_COMMAND_WINDOW_MS))
+	{
+		LOG("Repeat close command within %lu ms - not pressing the button again\r\n", REPEAT_COMMAND_WINDOW_MS);
+		return;
+	}
 	pulseRelay(PIN_FOR_GARAGE_DOOR_CLOSE);
 	_door.commandClose(millis());
 }
 
 void actionStop()
 {
+	if (_door.isRepeat(door::Door::Command::Stop, millis(), REPEAT_COMMAND_WINDOW_MS))
+	{
+		LOG("Repeat stop command within %lu ms - not pressing the button again\r\n", REPEAT_COMMAND_WINDOW_MS);
+		return;
+	}
 	pulseRelay(PIN_FOR_GARAGE_DOOR_STOP);
 	_door.commandStop(millis());
 }

@@ -66,6 +66,11 @@ namespace door
 		void commandClose(unsigned long nowMs);
 		void commandStop(unsigned long nowMs);
 
+		// True if the same command was last given less than windowMs ago - e.g. HomeKit sending the same target twice
+		// in quick succession.  The caller can then skip pressing the button again.
+		enum class Command { Open, Close, Stop };
+		bool isRepeat(Command command, unsigned long nowMs, unsigned long windowMs) const;
+
 		State state() const { return _state; }
 
 		// Outputs.  Each returns true (once) if there is something to act on since it was last called.
@@ -78,6 +83,11 @@ namespace door
 		enum class Movement { None, Opening, Closing, Stopped };
 
 		void setTarget(char target);
+		void recordCommand(Command command, unsigned long nowMs);
+
+		bool _hasLastCommand = false;
+		Command _lastCommand = Command::Stop;
+		unsigned long _lastCommandMs = 0;
 
 		Config _config;
 		State _state = State::Unknown;
