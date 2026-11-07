@@ -124,6 +124,12 @@ struct DebouncedInput
 
 DebouncedInput _bottomSensor = { HIGH, HIGH, 0, false };
 DebouncedInput _topSensor = { HIGH, HIGH, 0, false };
+DebouncedInput _wakeButton = { HIGH, HIGH, 0, false };
+
+// Display sleep (see DISPLAY_TIMEOUT_MS)
+bool _displayAsleep = false;
+bool _displayForceRedraw = false;		// Set on wake: the panel's memory is stale after being asleep
+unsigned long _displayLastActivity = 0;
 
 
 
@@ -157,7 +163,9 @@ void mqttCallback(char* topic, byte* message, unsigned int length);
 bool checkTimer(unsigned long* lastRun, unsigned long interval);
 void delayServicingNetwork(unsigned long ms);
 void releaseAllRelays();
-int readDebounced(DebouncedInput& input, uint8_t pin);
+int readDebounced(DebouncedInput& input, uint8_t pin, unsigned long debounceMs = SENSOR_DEBOUNCE_MS);
+void wakeDisplay();
+void serviceDisplay();
 bool isCommandTopic(const char* topic);
 void onOtaStart();
 void onOtaProgress(uint8_t percent);
@@ -184,6 +192,9 @@ void setup()
 	// Sensor inputs.  Naturally pulled HIGH; when the sensors are activated they go LOW.
 	pinMode(PIN_FOR_BOTTOM_SENSOR, INPUT_PULLUP);
 	pinMode(PIN_FOR_TOP_SENSOR, INPUT_PULLUP);
+
+	// Optional display wake button (to GND)
+	pinMode(PIN_FOR_DISPLAY_WAKE_BUTTON, INPUT_PULLUP);
 
 	// Turn on the OLED
 	_display.begin(I2C_ADDRESS, true); 
@@ -579,6 +590,7 @@ void rebootNow()
 #endif
 
 	releaseAllRelays();
+	wakeDisplay();
 	updateOLED(false, "", "Rebooting", "...");
 
 	if (_mqtt.connected())
@@ -622,6 +634,9 @@ void loop()
 
 	// Update runstate.  By this point any MQTT messages instructing to open/close have been actioned
 	updateRunstate();
+
+	// Wake/sleep the screen
+	serviceDisplay();
 
 	// Keep the status bar (activity asterisk, W and M indicators) current even when nothing else changes
 	if (checkTimer(&lastStatusBarRefresh, UPDATE_STATUS_BAR_INTERVAL))
@@ -688,10 +703,10 @@ void releaseAllRelays()
 /*
 readDebounced()
 
-Reads a pin, but only reports a changed value once the raw reading has held steady for SENSOR_DEBOUNCE_MS.
+Reads a pin, but only reports a changed value once the raw reading has held steady for debounceMs.
 A single glitchy sample (contact bounce, noise on a long cable) is therefore never reported.
 */
-int readDebounced(DebouncedInput& input, uint8_t pin)
+int readDebounced(DebouncedInput& input, uint8_t pin, unsigned long debounceMs)
 {
 	int raw = digitalRead(pin);
 	unsigned long now = millis();
@@ -710,7 +725,7 @@ int readDebounced(DebouncedInput& input, uint8_t pin)
 		input.last = raw;
 		input.changedAt = now;
 	}
-	else if (raw != input.stable && now - input.changedAt >= SENSOR_DEBOUNCE_MS)
+	else if (raw != input.stable && now - input.changedAt >= debounceMs)
 	{
 		// New reading has held steady long enough - accept it
 		input.stable = raw;
@@ -729,6 +744,7 @@ void onOtaStart()
 
 	// Whatever happens next, the door must not be left with a relay energised.
 	releaseAllRelays();
+	wakeDisplay();
 
 	// Tell home automation we're going offline.  The birth message will set this back to true after the reboot.
 	if (_mqtt.connected())
@@ -800,6 +816,80 @@ bool isCommandTopic(const char* topic)
 
 
 /*
+wakeDisplay()
+
+Treat now as activity: turn the screen on if it's asleep, and restart the timeout.
+*/
+void wakeDisplay()
+{
+	_displayLastActivity = millis();
+
+	if (_displayAsleep)
+	{
+		_display.oled_command(SH110X_DISPLAYON);
+		_displayAsleep = false;
+		_displayForceRedraw = true;
+		updateOLED(true, "", "", "");
+	}
+}
+
+
+/*
+serviceDisplay()
+
+Call from loop().  Wakes the screen on the button or on anything worth seeing, and puts it to sleep after
+DISPLAY_TIMEOUT_MS of nothing happening.
+*/
+void serviceDisplay()
+{
+	static bool initialised = false;
+	static doorState lastDoorState;
+	static bool lastWifi;
+	static bool lastMqtt;
+
+	bool wifi = (WiFi.status() == WL_CONNECTED);
+	bool mqtt = _mqtt.connected();
+	bool buttonPressed = (readDebounced(_wakeButton, PIN_FOR_DISPLAY_WAKE_BUTTON, BUTTON_DEBOUNCE_MS) == LOW);
+
+	if (!initialised)
+	{
+		initialised = true;
+		lastDoorState = _doorState;
+		lastWifi = wifi;
+		lastMqtt = mqtt;
+		_displayLastActivity = millis();
+	}
+
+#ifdef DEBUG
+	if (buttonPressed && _displayAsleep)
+	{
+		Serial.println("Display woken by button");
+	}
+#endif
+
+	// Holding the button keeps the screen on; a state change or connection change wakes it; and it stays on while
+	// WiFi or MQTT is down so a problem is visible to anyone who looks.
+	if (buttonPressed || _doorState != lastDoorState || wifi != lastWifi || mqtt != lastMqtt || !wifi || !mqtt)
+	{
+		wakeDisplay();
+	}
+
+	lastDoorState = _doorState;
+	lastWifi = wifi;
+	lastMqtt = mqtt;
+
+	if (DISPLAY_TIMEOUT_MS > 0 && !_displayAsleep && millis() - _displayLastActivity >= DISPLAY_TIMEOUT_MS)
+	{
+#ifdef DEBUG
+		Serial.println("Display sleeping (timeout)");
+#endif
+		_display.oled_command(SH110X_DISPLAYOFF);
+		_displayAsleep = true;
+	}
+}
+
+
+/*
 updateOLED()
 
 justStatus = true will ignore anything in the line parameters, false will update status bar and detail lines.
@@ -839,7 +929,13 @@ void updateOLED(bool justStatus, const char* line2, const char* line3, const cha
 
 	const char* lines[4] = { line1Contents, _oledLine2, _oledLine3, _oledLine4 };
 
-	bool changed = !everDrawn;
+	// While the screen is asleep, just keep the lines up to date - wakeDisplay() redraws them
+	if (_displayAsleep)
+	{
+		return;
+	}
+
+	bool changed = !everDrawn || _displayForceRedraw;
 	for (int i = 0; i < 4 && !changed; i++)
 	{
 		changed = (strcmp(lines[i], drawn[i]) != 0);
@@ -863,6 +959,7 @@ void updateOLED(bool justStatus, const char* line2, const char* line3, const cha
 	// Refresh the display
 	_display.display();
 	everDrawn = true;
+	_displayForceRedraw = false;
 }
 
 

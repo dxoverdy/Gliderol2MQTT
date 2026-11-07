@@ -122,6 +122,16 @@ Notes
 // How often to flash the top indicator on the display.
 #define UPDATE_STATUS_BAR_INTERVAL 500
 
+// OLEDs wear (dim, burn in) in proportion to how long their pixels are lit, so the screen switches itself off after
+// this long with nothing happening (milliseconds).  It wakes on boot, any door state change, WiFi/MQTT connecting or
+// dropping, an OTA update or reboot, and the wake button.  It stays on whenever WiFi or MQTT is down, so a problem is
+// always visible.  Set to 0 to keep the screen on permanently.
+#define DISPLAY_TIMEOUT_MS 120000
+
+// A briefly-pressed button must be held this long (milliseconds) to count - shorter than SENSOR_DEBOUNCE_MS so a quick
+// press is never missed, but long enough to reject contact bounce and noise.
+#define BUTTON_DEBOUNCE_MS 30
+
 
 // The ESP8266 on which Gliderol2MQTT was originally developed has limited memory and so reserving lots of RAM to build a
 // payload and MQTT buffer caused out of memory exceptions.  4096 worked well given the RAM requirements of Gliderol2MQTT.
@@ -297,6 +307,11 @@ Brown				8				GND
 #define PIN_FOR_BOTTOM_SENSOR 27
 // Chip Select (VSPI for Micro-SD Card Reader)
 #define PIN_FOR_SDCARD_VSPI_CS 5
+// Optional display wake button: a normally-open push button between this pin and GND.  Uses the internal pull-up,
+// so nothing else is needed, and with no button fitted it simply never triggers.
+// GPIO4 was chosen as it has no boot-strapping role, no JTAG role, isn't used for flash/PSRAM on WROOM or WROVER
+// modules, and (unlike GPIO34-39) has an internal pull-up.
+#define PIN_FOR_DISPLAY_WAKE_BUTTON 4
 
 // Door States
 enum doorState

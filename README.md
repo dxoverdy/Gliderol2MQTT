@@ -800,6 +800,11 @@ Best of luck!
 # OLED Screen
 Here's what the various things on the OLED screen tell you:
 
+## Screen timeout and wake button
+OLED screens dim and burn in according to how long their pixels are lit, so to make yours last, the screen switches itself off after two minutes with nothing happening (`DISPLAY_TIMEOUT_MS` in Definitions.h; set it to 0 to keep the screen on permanently).  It switches back on by itself at boot, whenever the door changes state, when WiFi or MQTT connects or drops, and during an OTA update or reboot.  It stays on for as long as WiFi or MQTT is down, so a problem is always visible.
+
+You can also fit an optional push button to wake it on demand - handy on the outside of the project box.  Use a normally-open (momentary) push button wired between **GPIO4** and **GND**.  No resistor is needed (the ESP32's internal pull-up is used), and if no button is fitted nothing happens.  A brief press wakes the screen for another two minutes; holding the button keeps it on.
+
 ## Line 1
 Status bar.  It will display G2M in the top left corner, and in the top right will show a flashing asterisk (*) to indicate normal operations, will show a steady W when WiFi is connected and a steady M when MQTT is connected.
 
