@@ -124,31 +124,25 @@ Gliderol2MQTT/request/is/stopped
 ### request/is/open
 Following an empty payload published to the topic 'Gliderol2MQTT/request/is/open', you will receive a response on Gliderol2MQTT/response/is/open.  The response payload is JSON akin to the following:
 ```
-{
-    "open": %s
-}
+{"open":true}
 ```
-Where %s is true (Door open) or false (Door closed.)
+The value is true (Door open) or false (Door not open.)
 
 
 ### request/is/closed
 Following an empty payload published to the topic 'Gliderol2MQTT/request/is/closed', you will receive a response on Gliderol2MQTT/response/is/closed.  The response payload is JSON akin to the following:
 ```
-{
-    "closed": %s
-}
+{"closed":true}
 ```
-Where %s is true (Door closed) or false (Door open.)
+The value is true (Door closed) or false (Door not closed.)
 
 
 ### request/is/stopped
 Following an empty payload published to the topic 'Gliderol2MQTT/request/is/stopped', you will receive a response on Gliderol2MQTT/response/is/stopped.  The response payload is JSON akin to the following:
 ```
-{
-    "partiallyopen": %s
-}
+{"partiallyopen":true}
 ```
-Where %s is true (Door partially open) or false (Door fully closed or open.)
+The value is true (Door partially open) or false (Door fully closed or open.)
 
 *When you leverage a top sensor as part of your implementation.*
 
@@ -186,10 +180,7 @@ Once you have published to this topic, you will receive the same payload back to
 ### request/perform/close
 Following an empty payload published to the topic 'Gliderol2MQTT/request/perform/close', you will receive a response on Gliderol2MQTT/response/perform/close.  The response payload is JSON akin to the following:
 ```
-{
-    "statusValue": "setCloseSuccess"
-	,"done": true
-}
+{"statusValue":"setCloseSuccess","done":true}
 ```
 *This indicates the action was triggered, but does not guarantee anything.  Your home automation will use the current state to report the outcome over time.*
 
@@ -197,10 +188,7 @@ Following an empty payload published to the topic 'Gliderol2MQTT/request/perform
 ### request/perform/open
 Following an empty payload published to the topic 'Gliderol2MQTT/request/perform/open', you will receive a response on Gliderol2MQTT/response/perform/open.  The response payload is JSON akin to the following:
 ```
-{
-    "statusValue": "setOpenSuccess"
-	,"done": true
-}
+{"statusValue":"setOpenSuccess","done":true}
 ```
 *This indicates the action was triggered, but does not guarantee anything.  Your home automation will use the current state to report the outcome over time.*
 
@@ -208,10 +196,7 @@ Following an empty payload published to the topic 'Gliderol2MQTT/request/perform
 ### request/perform/stop
 Following an empty payload published to the topic 'Gliderol2MQTT/request/perform/stop', you will receive a response on Gliderol2MQTT/response/perform/stop.  The response payload is JSON akin to the following:
 ```
-{
-    "statusValue": "setStopSuccess"
-	,"done": true
-}
+{"statusValue":"setStopSuccess","done":true}
 ```
 *This indicates the action was triggered, but does not guarantee anything.  Your home automation will use the target and current states to report the outcome.*
 
@@ -219,10 +204,7 @@ Following an empty payload published to the topic 'Gliderol2MQTT/request/perform
 ### request/perform/reboot
 Following an empty payload published to the topic 'Gliderol2MQTT/request/perform/reboot', you will receive a response on Gliderol2MQTT/response/perform/reboot, after which the device releases all relays, publishes `false` to connection_status and restarts.  The response payload is JSON akin to the following:
 ```
-{
-    "statusValue": "setRebootSuccess"
-	,"done": true
-}
+{"statusValue":"setRebootSuccess","done":true}
 ```
 Once back online, Gliderol2MQTT/device/boot will show `"reset_reason": "software"`.
 
@@ -232,7 +214,7 @@ Command topics (perform open/close/stop/reboot and set/target/door/state) must n
 
 
 ## Other MQTT Topics
-There are other topics which were implemented to assist in development.  They are listed below but without too much by way of detail.  They set, clear and return the individual ESP32 pin values for the relays driving the garage door and the sensor values.  You shouldn't need them, but it gives those of you who investigate the source code in depth some context.
+There are other topics which were implemented to assist in development.  They are listed below but without too much by way of detail.  They set, clear and return the individual ESP32 pin values for the relays driving the garage door and the sensor values.  The value topics reply with `{"value":"high"}` or `{"value":"low"}`, and set/clear reply with `{"done":true}`.  You shouldn't need them, but it gives those of you who investigate the source code in depth some context.
 ```
 Gliderol2MQTT/request/value/pin/close, Response via Gliderol2MQTT/response/value/pin/close
 Gliderol2MQTT/request/value/pin/stop, Response via Gliderol2MQTT/response/value/pin/stop
@@ -669,44 +651,29 @@ When we have finished programming the ESP32 and made sure everything behaves as 
 
 
 # Programming
-## Configuration
-Download the Gliderol2MQTT.ino and Definitions.h source files into a folder called Gliderol2MQTT.
+Gliderol2MQTT is built with [PlatformIO](https://platformio.org/) in Visual Studio Code.
 
-Configure your Gliderol2MQTT by opening up Definitions.h and verifying/customising the following definitions for your need:
+## Software Setup
+1. Install [Visual Studio Code](https://code.visualstudio.com/) and its **PlatformIO IDE** extension.
+2. If your ESP32 board uses a CH340 USB chip and your computer doesn't recognise it, install the [Wemos CH340 Driver](https://www.wemos.cc/en/latest/ch340_driver.html).
+3. Open the Gliderol2MQTT folder in VS Code (File / Open Folder).  PlatformIO downloads the ESP32 toolchain and all the libraries it needs automatically on the first build.
+
+## Credentials
+Copy `include/secrets.h.example` to `include/secrets.h` and fill in your WiFi details, your MQTT broker's address, port, username and password, and a password of your choosing for over-the-air updates.  `secrets.h` is git-ignored, so your passwords never end up in the repository.
+
+## Configuration
+Open `include/Definitions.h` and verify/customise the following for your needs:
 ```
-- Set WIFI_SSID to your WiFi Access Point name
-- Set WIFI_PASSWORD to your WiFi password
-- Set MQTT_SERVER to your MQTT broker IP
-- Set MQTT_PORT to your MQTT broker port (Default is 1883)
-- Set MQTT_USERNAME to a username configured in your MQTT broker
-- Set MQTT_PASSWORD to a password configured in your MQTT broker
 - Set DEVICE_NAME to a different name if you wish.  NB: The device name is used as the MQTT base topic and presence on the network.  This is useful if you have more than two Glidermatics and wish to control all
 - Set USING_TOP_SENSOR to true if you are using the top sensor, otherwise change to false
-- Set TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED to the number of milliseconds it takes your garage door to go from fully open to fully closed.  Essentially, start it opening and count how long before it reaches the top.  Add one second for tolerance.  I found 10 seconds (10000) was great for my door.  In effect, when you open the garage door with an MQTT message or when Gliderol2MQTT senses it is opening thanks to a change in the bottom sensor, Gliderol2MQTT will reporting Opening for this period of time before falling back to inform based on what the sensors are saying
-- Set TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN to the number of milliseconds it takes your garage door to go from fully closed to fully open.  Essentially, start it closing and count how long before it reaches the bottom.  Add one second for tolerance.  I found 10 seconds (10000) was great for my door.  In effect, when you close the garage door with an MQTT message or when Gliderol2MQTT senses it is opening thanks to a change in the top sensor, Gliderol2MQTT will reporting Closing for this period of time before falling back to inform based on what the sensors are saying
+- Set TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED to the number of milliseconds it takes your garage door to go from fully closed to fully open.  Essentially, start it opening and count how long before the top sensor clicks.  Add a second or two for tolerance.  Gliderol2MQTT reports Opening until the top sensor confirms the door has arrived (or, without a top sensor, for this period of time)
+- Set TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN to the number of milliseconds it takes your garage door to go from fully open to fully closed.  Essentially, start it closing and count how long before it reaches the bottom.  Add a second or two for tolerance.  Gliderol2MQTT reports Closing until the bottom sensor confirms the door has arrived
 - Set RELAY_ACTIVE_LEVEL to the ESP32 pin level which switches your relays on.  HIGH (the default) if your relay board is active-high, i.e. a relay clicks on when it receives 3.3V; LOW if it is active-low, i.e. a relay clicks on when its input is pulled to GND.  (Older versions used a NORMALLY_OPEN / NORMALLY_CLOSED pair; NORMALLY_OPEN is still accepted on the SD card and means the same thing.)
 - Set BOOT_UP_TARGET_STATE to 0 if you want, on boot up, Gliderol2MQTT to leave the last known retained target state in the MQTT broker as is (default), set to 1 if you wish to post a target state of Closed on boot up or set to 2 if you wish to post a target state of Open on boot up.
 ```
 
-## Software Configuration
-### Drivers
-Download and install the [Wemos CH340 Driver](https://www.wemos.cc/en/latest/ch340_driver.html).
-### Arduino IDE
-Download and install the [Arduino IDE](https://www.arduino.cc/en/software).
-### ESP32 Libraries
-Once installed and set up, you'll need the libraries for the ESP32. Follow [this guide](https://randomnerdtutorials.com/installing-esp32-arduino-ide-2-0/) if you haven't completed that step before.
-### Other Libraries
-Add a few more libraries using the Tools / Manage Libraries menu:
-
-1. PubSubClient by Nick O'Leary
-
-2. Adafruit GFX by Adafruit
-
-3. Adafruit SH110X by Adafruit
-
-(Even if you are not using the OLED screen you need install the Adafruit libraries or it will not compile.)
-
-Choose NodeMCU-32S as your board, choose the COM port for your board ...and upload.
+## First Upload
+Plug the ESP32 in over USB, choose the `nodemcu-32s` environment in the VS Code status bar and press Upload (the arrow in the status bar).  After this first upload, future updates can be sent over WiFi - see [Over-the-air (OTA) updates](#over-the-air-ota-updates).
 
 After uploading, you should see activity on your screen.  Like so:
 
@@ -744,10 +711,7 @@ The absence of a Micro-SD card or absence of the settings.txt file will just res
 ## Over-the-air (OTA) updates
 Once Gliderol2MQTT firmware with OTA support has been flashed over USB *once*, every later update can be sent over WiFi - no need to visit the garage.
 
-1. Add an OTA password to `private.ini` (see `private.ini.example`):
-```
-ota_password = "SomeLongRandomLettersAndDigits"
-```
+1. Make sure `OTA_PASSWORD` is set in `include/secrets.h` (letters and digits only).  The firmware is built with it, and `scripts/ota_auth.py` passes the same password to the uploader, so it only lives in one place.
 2. Flash over USB the first time using the `nodemcu-32s` environment.
 3. From then on, select the `nodemcu-32s-ota` environment (VS Code status bar) and upload, or run:
 ```
@@ -756,6 +720,29 @@ pio run -e nodemcu-32s-ota -t upload
 PlatformIO finds the device as `Gliderol2MQTT.local` (your DEVICE_NAME followed by `.local`).  If you change DEVICE_NAME, update `upload_port` in `platformio.ini` to match - or use the device's IP address instead.
 
 During an update all relays are released, the OLED shows progress, and `connection_status` is published as `false`.  The device reboots into the new firmware when the upload completes.  OTA is available from roughly two seconds after boot, including during the "Determine status" wait and while trying to reach the MQTT broker, so a broker problem won't lock you out of remote flashing.
+
+If `pio` isn't recognised in your terminal, use the PlatformIO terminal in VS Code (PlatformIO sidebar / Quick Access / Miscellaneous / New Terminal), or run `~/.platformio/penv/bin/pio`.
+
+
+## Code Layout and Tests
+```
+include/Definitions.h     Compiled-in settings and pin assignments - start here
+include/secrets.h         Your credentials (git-ignored; copy from secrets.h.example)
+src/main.cpp              Wires everything together; owns the relays, sensors and WiFi
+src/Settings.cpp          settings.txt on the SD card
+src/MqttInterface.cpp     MQTT connection, every topic (in one table) and its handler
+src/Display.cpp           OLED, screen timeout and wake button
+src/Ota.cpp               Over-the-air updates
+src/BootReport.cpp        The device/boot report
+lib/DoorLogic/            The door state machine, debouncing and command guard - no hardware code, so it is unit tested
+test/test_door/           Those unit tests
+scripts/ota_auth.py       Passes OTA_PASSWORD to the uploader
+```
+The door logic tests run on your computer, not the ESP32, in a few seconds:
+```
+pio test -e native
+```
+Run them before flashing a change to the door logic.
 
 
 # Final Assembly

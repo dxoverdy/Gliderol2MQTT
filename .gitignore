@@ -4,3 +4,5 @@
 .vscode/launch.json
 .vscode/ipch
 private.ini
+# Credentials (see include/secrets.h.example)
+include/secrets.h

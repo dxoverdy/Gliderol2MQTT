@@ -10,6 +10,7 @@ See BootReport.h for usage.
 
 #include "BootReport.h"
 #include "Definitions.h"
+#include "Log.h"
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -58,9 +59,7 @@ namespace bootreport
 			preferences.end();
 		}
 
-#ifdef DEBUG
-		Serial.printf("Boot #%lu, reset reason: %s\r\n", _bootCount, _resetReason);
-#endif
+		LOG("Boot #%lu, reset reason: %s\r\n", _bootCount, _resetReason);
 	}
 
 	void startClock()

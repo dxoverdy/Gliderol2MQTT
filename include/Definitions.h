@@ -6,38 +6,34 @@ Author:		Daniel Young
 This file is part of Gliderol2MQTT (G2M) which is released under GNU GENERAL PUBLIC LICENSE.
 See file LICENSE or go to https://choosealicense.com/licenses/gpl-3.0/ for full license details.
 
-Notes
-
-
+Compiled-in settings and hardware definitions.  Credentials are in include/secrets.h (git-ignored).
+Most of the Friendly Settings can also be overridden at boot from settings.txt on the SD card - see Settings.h.
 */
 
-#ifndef _DEFINITIONS_h
-#define _DEFINITIONS_h
+#pragma once
 
-// Helper macros to turn raw text definitions into true C++ strings, for the values injected from private.ini
-#define STRINGIFY(x) #x
-#define TOSTRING(x) STRINGIFY(x)
+#include <Arduino.h>
 
 
 // **************** Friendly Settings ****************
-// The device name is used as the MQTT base topic and presence on the network.
+// The device name is used as the MQTT base topic, the WiFi hostname and the OTA name (<DEVICE_NAME>.local).
 // If you need more than one Gliderol2MQTT on your network, give them unique names.
-#define DEVICE_NAME "Gliderol2MQTT"
+constexpr const char* DEVICE_NAME = "Gliderol2MQTT";
 
-// If there is a top sensor in use, change this to true.  This will enable 'stop' functionality to be reported correctly
+// If there is a top sensor in use, set this to true.  This will enable 'stop' functionality to be reported correctly
 // as 'stopped' is somewhere between top and bottom after the duration to open or close has elapsed.  Closing from a fob
 // is also supported when using the top sensor.  Otherwise only open/closed can be reported.
-#define USING_TOP_SENSOR true
+constexpr bool USING_TOP_SENSOR = true;
 
-// How long the door takes to open from fully closed, and vice versa.  Used for timing the 'Opening' and 'Closing' statuses.
-// Time your door to the moment the sensor clicks and add a second or two.  A movement is reported as finished as soon
-// as the destination sensor confirms arrival, so a generous value costs nothing.
-#define TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED 10000
-#define TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN 10000
+// How long the door takes to open from fully closed, and vice versa (milliseconds).  Used for timing the 'Opening' and
+// 'Closing' statuses.  Time your door to the moment the sensor clicks and add a second or two.  A movement is reported
+// as finished as soon as the destination sensor confirms arrival, so a generous value costs nothing.
+constexpr unsigned long TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED = 10000;
+constexpr unsigned long TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN = 10000;
 
 // If the travel time above passes with the door mid-way (neither sensor active), keep reporting Opening/Closing for up
 // to this much longer (milliseconds) before reporting Stopped - in case the door is just slow today.  Top sensor only.
-#define MOVEMENT_GRACE_MS 5000
+constexpr unsigned long MOVEMENT_GRACE_MS = 5000;
 
 // The GPIO level which switches a relay ON (energised - the equivalent of pressing the Glidermatic button).
 // Relay boards come in two kinds:
@@ -45,125 +41,74 @@ Notes
 //   Active-low:  the relay switches on when the ESP32 pin is LOW (GND).  Many cheap optocoupler boards are this kind.
 // The idle (off) level is always the opposite, so there is only one setting.
 // SD card key: "RELAY_ACTIVE_LEVEL":"HIGH" or "LOW".  (The old "NORMALLY_OPEN" key is still accepted and means the same.)
-#define RELAY_ACTIVE_LEVEL HIGH
-
-
-// Check if the compiler flags were passed correctly from platformio.ini
-#ifndef WIFI_SSID
-  #error "WIFI_SSID is not defined! Please check your private.ini file."
-#endif
-
-#ifndef WIFI_PASSWORD
-  #error "WIFI_PASSWORD is not defined! Please check your private.ini file."
-#endif
-
-#ifndef MQTT_BROKER
-  #error "MQTT_BROKER is not defined! Please check your private.ini file."
-#endif
-
-#ifndef MQTT_PORT
-  #error "MQTT_PORT is not defined! Please check your private.ini file."
-#endif
-
-#ifndef MQTT_USERNAME
-  #error "MQTT_USERNAME is not defined! Please check your private.ini file."
-#endif
-
-#ifndef MQTT_PASSWORD
-  #error "MQTT_PASSWORD is not defined! Please check your private.ini file."
-#endif
-
-#ifndef OTA_PASSWORD
-  #error "OTA_PASSWORD is not defined! Please check your private.ini file."
-#endif
-
-
-
+constexpr int RELAY_ACTIVE_LEVEL = HIGH;
 
 // On boot up you have a choice to either
 // Leave the door target state as last known (leaves the target state as is - the current retained value in the MQTT broker) = 0
 // Set to Closed = 1
 // Set to Open = 2
-
-// Don't change these:
-#define BOOT_TARGET_STATE_LAST_KNOWN 0
-#define BOOT_TARGET_STATE_CLOSED 1
-#define BOOT_TARGET_STATE_OPEN 2
-// Change this:
-#define BOOT_UP_TARGET_STATE 0
-
-
-
-
+constexpr int BOOT_TARGET_STATE_LAST_KNOWN = 0;		// Don't change these three
+constexpr int BOOT_TARGET_STATE_CLOSED = 1;
+constexpr int BOOT_TARGET_STATE_OPEN = 2;
+constexpr int BOOT_UP_TARGET_STATE = BOOT_TARGET_STATE_LAST_KNOWN;		// Change this
 
 
 // **************** More Advanced Settings ****************
-// How often the status of the door is sent out
 // The current state is published (retained) immediately on every change and on every (re)connect, so this periodic
 // re-send is only a heartbeat/safety net - e.g. for a broker restarted without persistence.  Once a minute is plenty.
-#define MQTT_STATUS_INTERVAL 60000
+constexpr unsigned long MQTT_STATUS_INTERVAL = 60000;
 
 // "Sets the keep alive interval used by the client." (seconds)
 // The broker declares us offline (and publishes the last will and testament) after 1.5 x this with no contact, so
 // 15 means ~22 seconds.  Shorter values make brief WiFi blips show as "No Response" in HomeKit and force a full
 // reconnect, without making the door any safer - offline is offline.  15 is the library default.
-#define MQTT_KEEP_ALIVE 15
+constexpr uint16_t MQTT_KEEP_ALIVE = 15;
 
-// "Sets the socket timeout used by the client. This determines how long the client will wait for incoming data when it expects data to arrive - for example, whilst it is in the middle of reading an MQTT packet." (seconds)
-// Library default is 15 however with this project carrying the security of a door I am using 5
-#define MQTT_SOCKET_TIMEOUT 5
+// "Sets the socket timeout used by the client. This determines how long the client will wait for incoming data when it
+// expects data to arrive - for example, whilst it is in the middle of reading an MQTT packet." (seconds)
+constexpr uint16_t MQTT_SOCKET_TIMEOUT = 5;
 
 // While disconnected from the broker, how often to try reconnecting (milliseconds).  The main loop keeps running in
 // between - sensors are tracked and the display updated - so this only paces the attempts.
-#define MQTT_RETRY_INTERVAL 5000
+constexpr unsigned long MQTT_RETRY_INTERVAL = 5000;
 
 // The ESP32 reconnects to WiFi by itself, but occasionally gets stuck.  If WiFi has been down this long
 // (milliseconds), start the connection afresh.
-#define WIFI_RESTART_AFTER_MS 30000
+constexpr unsigned long WIFI_RESTART_AFTER_MS = 30000;
 
-// These timers are used in the main loop.
-// How often to update the status on the screen
-#define DISPLAY_INTERVAL 250
+// MQTT packet buffer (bytes).  The largest message is the boot report at around 300 bytes.
+constexpr uint16_t MQTT_BUFFER_SIZE = 512;
 
-// How often to flash the top indicator on the display.
-#define UPDATE_STATUS_BAR_INTERVAL 500
+// How often to refresh the relay/sensor lines on the screen (milliseconds)
+constexpr unsigned long DISPLAY_INTERVAL = 250;
+
+// How often to flash the activity indicator on the display (milliseconds)
+constexpr unsigned long UPDATE_STATUS_BAR_INTERVAL = 500;
 
 // OLEDs wear (dim, burn in) in proportion to how long their pixels are lit, so the screen switches itself off after
 // this long with nothing happening (milliseconds).  It wakes on boot, any door state change, WiFi/MQTT connecting or
 // dropping, an OTA update or reboot, and the wake button.  It stays on whenever WiFi or MQTT is down, so a problem is
 // always visible.  Set to 0 to keep the screen on permanently.
-#define DISPLAY_TIMEOUT_MS 120000
-
-// A briefly-pressed button must be held this long (milliseconds) to count - shorter than SENSOR_DEBOUNCE_MS so a quick
-// press is never missed, but long enough to reject contact bounce and noise.
-#define BUTTON_DEBOUNCE_MS 30
-
-
-// The ESP8266 on which Gliderol2MQTT was originally developed has limited memory and so reserving lots of RAM to build a
-// payload and MQTT buffer caused out of memory exceptions.  4096 worked well given the RAM requirements of Gliderol2MQTT.
-// This could be increased given the project is now ESP32 based however none of the payloads come even close to 4096.
-// Gliderol2MQTT on boot will request a buffer size of (MAX_MQTT_PAYLOAD_SIZE + MQTT_HEADER_SIZE) for MQTT, and
-// MAX_MQTT_PAYLOAD_SIZE for building payloads.  If these fail and your device doesn't boot, you can assume you've set this too high.
-#define MAX_MQTT_PAYLOAD_SIZE 4096
-#define MIN_MQTT_PAYLOAD_SIZE 512
-#define MQTT_HEADER_SIZE 512
-
-
+constexpr unsigned long DISPLAY_TIMEOUT_MS = 120000;
 
 // A sensor reading must hold steady for this many milliseconds before it is believed.
 // This filters contact bounce and electrical noise on long sensor cables, which would otherwise
 // be reported as the door starting to open/close.
-#define SENSOR_DEBOUNCE_MS 100
+constexpr unsigned long SENSOR_DEBOUNCE_MS = 100;
 
-// After (re)subscribing, door commands arriving within this window are ignored.
-// A broker re-delivers retained messages on subscribe, and a stray retained "open" command must
-// never actuate the door just because the device reconnected.  Retained commands are also cleared
-// from the broker before subscribing; this is a second line of defence.
-#define COMMAND_IGNORE_AFTER_SUBSCRIBE_MS 1500
+// A briefly-pressed button must be held this long (milliseconds) to count - shorter than SENSOR_DEBOUNCE_MS so a quick
+// press is never missed, but long enough to reject contact bounce and noise.
+constexpr unsigned long BUTTON_DEBOUNCE_MS = 30;
 
-// Over-the-air updates.  The OTA password comes from private.ini (ota_password) and the device is
-// reachable for uploads at <DEVICE_NAME>.local - see the [env:nodemcu-32s-ota] section of platformio.ini.
-#define OTA_PORT 3232
+// After (re)subscribing, commands arriving within this window are ignored.
+// A broker re-delivers retained messages on subscribe, and a stray retained "open" (or "reboot") command must
+// never act just because the device reconnected.  Retained commands are also cleared from the broker before
+// subscribing; this is a second line of defence.
+constexpr unsigned long COMMAND_IGNORE_AFTER_SUBSCRIBE_MS = 1500;
+
+// Over-the-air updates.  The OTA password is OTA_PASSWORD in include/secrets.h, and the device is reachable for uploads
+// at <DEVICE_NAME>.local - see the [env:nodemcu-32s-ota] section of platformio.ini.
+constexpr uint16_t OTA_PORT = 3232;
 
 // Development-only MQTT topics which directly set/clear the relay pins (request/set/value/pin/* and
 // request/clear/value/pin/*).  These can hold a relay energised indefinitely, so they are compiled out
@@ -175,120 +120,12 @@ Notes
 // For verbose messaging to the serial port, define DEBUG_LEVEL2
 //#define DEBUG_LEVEL2
 
-
 // **************** End of Settings ****************
 
 
-
-// MQTT Subscriptions
-enum mqttSubscriptions
-{
-	requestPerformClose,
-	requestPerformOpen,
-	requestPerformStop,
-	requestPerformReboot,
-
-	requestValuePinClose,
-	requestValuePinOpen,
-	requestValuePinStop,
-	requestValuePinTopSensor,
-	requestValuePinBottomSensor,
-
-	requestIsOpen,
-	requestIsClosed,
-	requestIsStopped,
-
-	requestSetValuePinClose,
-	requestSetValuePinOpen,
-	requestSetValuePinStop,
-
-	requestClearValuePinClose,
-	requestClearValuePinOpen,
-	requestClearValuePinStop,
-
-	setTargetDoorState,
-	getTargetDoorState,
-	getCurrentDoorState,
-
-	subscriptionUnknown
-};
-
-// Birth and Last Will and Testament Topic
-#define MQTT_CONNECTION_STATUS "/connection_status"
-
-// Published (retained) once per boot: when, why and with which firmware the device started.  See BootReport.h.
-#define MQTT_DEVICE_BOOT "/device/boot"
-
-// Current and Target Request and Response Topics
-#define MQTT_HOMEKIT_SET_TARGET_DOOR_STATE "/set/target/door/state"
-#define MQTT_HOMEKIT_GET_TARGET_DOOR_STATE "/get/target/door/state"
-#define MQTT_HOMEKIT_GET_CURRENT_DOOR_STATE "/get/current/door/state"
-
-// Request Topics
-#define MQTT_SUB_REQUEST_PERFORM_CLOSE "/request/perform/close"
-#define MQTT_SUB_REQUEST_PERFORM_OPEN "/request/perform/open"
-#define MQTT_SUB_REQUEST_PERFORM_STOP "/request/perform/stop"
-#define MQTT_SUB_REQUEST_PERFORM_REBOOT "/request/perform/reboot"
-#define MQTT_SUB_REQUEST_IS_OPEN "/request/is/open"
-#define MQTT_SUB_REQUEST_IS_CLOSED "/request/is/closed"
-#define MQTT_SUB_REQUEST_IS_STOPPED "/request/is/stopped"
-
-// Response Topics
-#define MQTT_SUB_RESPONSE_PERFORM_CLOSE "/response/perform/close"
-#define MQTT_SUB_RESPONSE_PERFORM_OPEN "/response/perform/open"
-#define MQTT_SUB_RESPONSE_PERFORM_STOP "/response/perform/stop"
-#define MQTT_SUB_RESPONSE_PERFORM_REBOOT "/response/perform/reboot"
-#define MQTT_SUB_RESPONSE_IS_OPEN "/response/is/open"
-#define MQTT_SUB_RESPONSE_IS_CLOSED "/response/is/closed"
-#define MQTT_SUB_RESPONSE_IS_STOPPED "/response/is/stopped"
-
-// For development only
-#define MQTT_SUB_REQUEST_VALUE_PIN_CLOSE "/request/value/pin/close"
-#define MQTT_SUB_REQUEST_VALUE_PIN_STOP "/request/value/pin/stop"
-#define MQTT_SUB_REQUEST_VALUE_PIN_OPEN "/request/value/pin/open"
-#define MQTT_SUB_REQUEST_VALUE_PIN_TOP_SENSOR "/request/value/pin/top_sensor"
-#define MQTT_SUB_REQUEST_VALUE_PIN_BOTTOM_SENSOR "/request/value/pin/bottom_sensor"
-
-// For development only
-#define MQTT_SUB_RESPONSE_VALUE_PIN_CLOSE "/response/value/pin/close"
-#define MQTT_SUB_RESPONSE_VALUE_PIN_STOP "/response/value/pin/stop"
-#define MQTT_SUB_RESPONSE_VALUE_PIN_OPEN "/response/value/pin/open"
-#define MQTT_SUB_RESPONSE_VALUE_PIN_TOP_SENSOR "/response/value/pin/top_sensor"
-#define MQTT_SUB_RESPONSE_VALUE_PIN_BOTTOM_SENSOR "/response/value/pin/bottom_sensor"
-
-// For development only
-#define MQTT_SUB_REQUEST_SET_VALUE_PIN_CLOSE "/request/set/value/pin/close"
-#define MQTT_SUB_REQUEST_SET_VALUE_PIN_STOP "/request/set/value/pin/stop"
-#define MQTT_SUB_REQUEST_SET_VALUE_PIN_OPEN "/request/set/value/pin/open"
-
-// For development only
-#define MQTT_SUB_RESPONSE_SET_VALUE_PIN_CLOSE "/response/set/value/pin/close"
-#define MQTT_SUB_RESPONSE_SET_VALUE_PIN_STOP "/response/set/value/pin/stop"
-#define MQTT_SUB_RESPONSE_SET_VALUE_PIN_OPEN "/response/set/value/pin/open"
-
-// For development only
-#define MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_CLOSE "/request/clear/value/pin/close"
-#define MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_STOP "/request/clear/value/pin/stop"
-#define MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_OPEN "/request/clear/value/pin/open"
-
-// For development only
-#define MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_CLOSE "/response/clear/value/pin/close"
-#define MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_STOP "/response/clear/value/pin/stop"
-#define MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_OPEN "/response/clear/value/pin/open"
-
-
-
-#define MAX_MQTT_NAME_LENGTH 81
-#define MAX_MQTT_STATUS_LENGTH 51
-#define OLED_CHARACTER_WIDTH 11				// Number of chars which can be displayed per line on the display
-#define SETTING_MAX_WIDTH 64				// Number of chars a JSON setting name can be
-#define SETTINGS_FILE_MAX_BYTES 4096		// settings.txt files larger than this are rejected
-#define DOOR_STATE_MAX_LENGTH 10
-#define DEBUG_MAX_LENGTH 256
-#define MQTT_TOPIC_MAX_LENGTH 256
-#define MQTT_PAYLOAD_STATE_ADDITION 256
-
-
+constexpr size_t SETTING_MAX_WIDTH = 64;			// Longest string setting + 1 (a WPA2 password can be 63 characters)
+constexpr size_t SETTINGS_FILE_MAX_BYTES = 4096;	// settings.txt files larger than this are rejected
+constexpr size_t OLED_CHARACTER_WIDTH = 11;			// Characters per line on the display (10) + 1
 
 
 /*
@@ -301,80 +138,20 @@ Brown				8				GND
 */
 
 // Up Pin (Relay 1) Open
-#define PIN_FOR_GARAGE_DOOR_OPEN 32
+constexpr uint8_t PIN_FOR_GARAGE_DOOR_OPEN = 32;
 // Stop Pin (Relay 2) Stop
-#define PIN_FOR_GARAGE_DOOR_STOP 33
+constexpr uint8_t PIN_FOR_GARAGE_DOOR_STOP = 33;
 // Down Pin (Relay 3) Close
-#define PIN_FOR_GARAGE_DOOR_CLOSE 25
+constexpr uint8_t PIN_FOR_GARAGE_DOOR_CLOSE = 25;
 
 // Opened Sensor
-#define PIN_FOR_TOP_SENSOR 26
+constexpr uint8_t PIN_FOR_TOP_SENSOR = 26;
 // Closed Sensor
-#define PIN_FOR_BOTTOM_SENSOR 27
+constexpr uint8_t PIN_FOR_BOTTOM_SENSOR = 27;
 // Chip Select (VSPI for Micro-SD Card Reader)
-#define PIN_FOR_SDCARD_VSPI_CS 5
+constexpr uint8_t PIN_FOR_SDCARD_VSPI_CS = 5;
 // Optional display wake button: a normally-open push button between this pin and GND.  Uses the internal pull-up,
 // so nothing else is needed, and with no button fitted it simply never triggers.
 // GPIO4 was chosen as it has no boot-strapping role, no JTAG role, isn't used for flash/PSRAM on WROOM or WROVER
 // modules, and (unlike GPIO34-39) has an internal pull-up.
-#define PIN_FOR_DISPLAY_WAKE_BUTTON 4
-
-// Door States
-enum doorState
-{
-	doorOpening,
-	doorClosing,
-	doorOpen,
-	doorClosed,
-	doorStopped,
-	doorStateUnknown
-};
-
-// Door State Descriptions (Display)
-#define DOOR_STATE_OPENING_DESC "Opening"
-#define DOOR_STATE_CLOSING_DESC "Closing"
-#define DOOR_STATE_OPEN_DESC "Open"
-#define DOOR_STATE_CLOSED_DESC "Closed"
-#define DOOR_STATE_STOPPED_DESC "Stopped"
-#define DOOR_STATE_UNKNOWN_DESC "Unknown"
-
-// MQTT-Thing default statuses, can be changed in conjunction with Homebridge MQTT-Thing for example.
-#define DOOR_STATE_HOMEKIT_OPENING "o"
-#define DOOR_STATE_HOMEKIT_CLOSING "c"
-#define DOOR_STATE_HOMEKIT_OPEN "O"
-#define DOOR_STATE_HOMEKIT_CLOSED "C"
-#define DOOR_STATE_HOMEKIT_STOPPED "S"
-#define DOOR_STATE_HOMEKIT_UNKNOWN "U"
-
-// Ensure we stick to fixed values by forcing from a selection of values
-enum statusValues
-{
-	preProcessing,
-	noMQTTPayload,
-	invalidMQTTPayload,
-	setOpenSuccess,
-	setStopSuccess,
-	setCloseSuccess,
-	setRebootSuccess,
-	payloadExceededCapacity,
-	addedToPayload,
-	notValidIncomingTopic
-};
-
-// MQTT JSON responses for several topics
-#define STATUS_PREPROCESSING_MQTT_DESC "preProcessing"
-#define STATUS_NO_MQTT_PAYLOAD_MQTT_DESC "noMQTTPayload"
-#define STATUS_INVALID_MQTT_PAYLOAD_MQTT_DESC "invalidMQTTPayload"
-#define STATUS_SET_OPEN_SUCCESS_MQTT_DESC "setOpenSuccess"
-#define STATUS_SET_STOP_SUCCESS_MQTT_DESC "setStopSuccess"
-#define STATUS_SET_CLOSE_SUCCESS_MQTT_DESC "setCloseSuccess"
-#define STATUS_SET_REBOOT_SUCCESS_MQTT_DESC "setRebootSuccess"
-#define STATUS_PAYLOAD_EXCEEDED_CAPACITY_MQTT_DESC "payloadExceededCapacity"
-#define STATUS_ADDED_TO_PAYLOAD_MQTT_DESC "addedToPayload"
-#define STATUS_NOT_VALID_INCOMING_TOPIC_DESC "notValidIncomingTopic"
-
-// Definitions not found within libraries
-#define WL_MAC_ADDR_LENGTH 6
-
-#endif
-
+constexpr uint8_t PIN_FOR_DISPLAY_WAKE_BUTTON = 4;

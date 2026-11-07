@@ -10,6 +10,7 @@ See Ota.h for usage.
 
 #include "Ota.h"
 #include "Definitions.h"
+#include "Log.h"
 
 #include <Arduino.h>
 #include <ArduinoOTA.h>
@@ -23,7 +24,8 @@ namespace ota
 		bool _inProgress = false;
 		int _lastPercent = -1;
 
-		const char* errorDescription(ota_error_t error)
+		// Only used in log messages, so unused when DEBUG is off
+		__attribute__((unused)) const char* errorDescription(ota_error_t error)
 		{
 			switch (error)
 			{
@@ -58,9 +60,7 @@ namespace ota
 		{
 			_inProgress = true;
 			_lastPercent = -1;
-#ifdef DEBUG
-			Serial.printf("OTA: Update starting (%s)\r\n", ArduinoOTA.getCommand() == U_FLASH ? "firmware" : "filesystem");
-#endif
+			LOG("OTA: Update starting (%s)\r\n", ArduinoOTA.getCommand() == U_FLASH ? "firmware" : "filesystem");
 			if (_hooks.onStart)
 			{
 				_hooks.onStart();
@@ -89,9 +89,7 @@ namespace ota
 		ArduinoOTA.onEnd([]()
 		{
 			_inProgress = false;
-#ifdef DEBUG
-			Serial.println("OTA: Update complete, rebooting");
-#endif
+			LOG("OTA: Update complete, rebooting\r\n");
 			if (_hooks.onEnd)
 			{
 				_hooks.onEnd(true);
@@ -101,9 +99,7 @@ namespace ota
 		ArduinoOTA.onError([](ota_error_t error)
 		{
 			_inProgress = false;
-#ifdef DEBUG
-			Serial.printf("OTA: Error %u - %s\r\n", (unsigned)error, errorDescription(error));
-#endif
+			LOG("OTA: Error %u - %s\r\n", (unsigned)error, errorDescription(error));
 			if (_hooks.onEnd)
 			{
 				_hooks.onEnd(false);
@@ -113,9 +109,7 @@ namespace ota
 		ArduinoOTA.begin();
 		_started = true;
 
-#ifdef DEBUG
-		Serial.printf("OTA: Listening as %s.local on port %u\r\n", hostname, (unsigned)port);
-#endif
+		LOG("OTA: Listening as %s.local on port %u\r\n", hostname, (unsigned)port);
 	}
 
 	void handle()

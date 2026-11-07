@@ -27,6 +27,13 @@ may be true/false as well as "Yes"/"No", and the old NORMALLY_OPEN key is accept
 */
 
 #include "Settings.h"
+#include "Log.h"
+
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#error "include/secrets.h not found - copy include/secrets.h.example to include/secrets.h and fill in your details"
+#endif
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -46,32 +53,26 @@ namespace settings
 			}
 			if (!value.is<const char*>())
 			{
-#ifdef DEBUG
-				Serial.printf("Settings: %s must be a string - ignored\r\n", key);
-#endif
+				LOG("Settings: %s must be a string - ignored\r\n", key);
 				return false;
 			}
 
 			const char* text = value.as<const char*>();
 			if (strlen(text) >= length)
 			{
-#ifdef DEBUG
-				Serial.printf("Settings: %s is longer than %u characters - ignored\r\n", key, (unsigned)(length - 1));
-#endif
+				LOG("Settings: %s is longer than %u characters - ignored\r\n", key, (unsigned)(length - 1));
 				return false;
 			}
 
 			strlcpy(destination, text, length);
-#ifdef DEBUG
 			if (secret)
 			{
-				Serial.printf("Settings: %s set (value hidden)\r\n", key);
+				LOG("Settings: %s set (value hidden)\r\n", key);
 			}
 			else
 			{
-				Serial.printf("Settings: %s = \"%s\"\r\n", key, destination);
+				LOG("Settings: %s = \"%s\"\r\n", key, destination);
 			}
-#endif
 			return true;
 		}
 
@@ -96,32 +97,24 @@ namespace settings
 				number = strtol(text, &end, 10);
 				if (end == text || *end != '\0')
 				{
-#ifdef DEBUG
-					Serial.printf("Settings: %s is not a whole number - ignored\r\n", key);
-#endif
+					LOG("Settings: %s is not a whole number - ignored\r\n", key);
 					return false;
 				}
 			}
 			else
 			{
-#ifdef DEBUG
-				Serial.printf("Settings: %s is not a whole number - ignored\r\n", key);
-#endif
+				LOG("Settings: %s is not a whole number - ignored\r\n", key);
 				return false;
 			}
 
 			if (number < minimum || number > maximum)
 			{
-#ifdef DEBUG
-				Serial.printf("Settings: %s = %ld is outside %ld..%ld - ignored\r\n", key, number, minimum, maximum);
-#endif
+				LOG("Settings: %s = %ld is outside %ld..%ld - ignored\r\n", key, number, minimum, maximum);
 				return false;
 			}
 
 			result = number;
-#ifdef DEBUG
-			Serial.printf("Settings: %s = %ld\r\n", key, number);
-#endif
+			LOG("Settings: %s = %ld\r\n", key, number);
 			return true;
 		}
 
@@ -147,14 +140,10 @@ namespace settings
 			}
 			else
 			{
-#ifdef DEBUG
-				Serial.printf("Settings: %s must be \"Yes\" or \"No\" - ignored\r\n", key);
-#endif
+				LOG("Settings: %s must be \"Yes\" or \"No\" - ignored\r\n", key);
 				return false;
 			}
-#ifdef DEBUG
-			Serial.printf("Settings: %s = %s\r\n", key, result ? "Yes" : "No");
-#endif
+			LOG("Settings: %s = %s\r\n", key, result ? "Yes" : "No");
 			return true;
 		}
 
@@ -176,14 +165,10 @@ namespace settings
 			}
 			else
 			{
-#ifdef DEBUG
-				Serial.printf("Settings: %s must be \"HIGH\" or \"LOW\" - ignored\r\n", key);
-#endif
+				LOG("Settings: %s must be \"HIGH\" or \"LOW\" - ignored\r\n", key);
 				return false;
 			}
-#ifdef DEBUG
-			Serial.printf("Settings: %s = %s\r\n", key, result == HIGH ? "HIGH" : "LOW");
-#endif
+			LOG("Settings: %s = %s\r\n", key, result == HIGH ? "HIGH" : "LOW");
 			return true;
 		}
 	}
@@ -192,12 +177,12 @@ namespace settings
 	Settings defaults()
 	{
 		Settings s;
-		strlcpy(s.wifiSsid, TOSTRING(WIFI_SSID), sizeof(s.wifiSsid));
-		strlcpy(s.wifiPassword, TOSTRING(WIFI_PASSWORD), sizeof(s.wifiPassword));
-		strlcpy(s.mqttServer, TOSTRING(MQTT_BROKER), sizeof(s.mqttServer));
+		strlcpy(s.wifiSsid, WIFI_SSID, sizeof(s.wifiSsid));
+		strlcpy(s.wifiPassword, WIFI_PASSWORD, sizeof(s.wifiPassword));
+		strlcpy(s.mqttServer, MQTT_BROKER, sizeof(s.mqttServer));
 		s.mqttPort = MQTT_PORT;
-		strlcpy(s.mqttUsername, TOSTRING(MQTT_USERNAME), sizeof(s.mqttUsername));
-		strlcpy(s.mqttPassword, TOSTRING(MQTT_PASSWORD), sizeof(s.mqttPassword));
+		strlcpy(s.mqttUsername, MQTT_USERNAME, sizeof(s.mqttUsername));
+		strlcpy(s.mqttPassword, MQTT_PASSWORD, sizeof(s.mqttPassword));
 		strlcpy(s.deviceName, DEVICE_NAME, sizeof(s.deviceName));
 		s.usingTopSensor = USING_TOP_SENSOR;
 		s.doorOpenTimeMs = TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED;
@@ -210,36 +195,26 @@ namespace settings
 
 	LoadResult loadFromSd(Settings& settings)
 	{
-#ifdef DEBUG
-		Serial.print("Initialising SD card...");
-#endif
+		LOG("Initialising SD card...");
 		if (!SD.begin(PIN_FOR_SDCARD_VSPI_CS))
 		{
-#ifdef DEBUG
-			Serial.println("Initialisation failed!");
-#endif
+			LOG("Initialisation failed!\r\n");
 			return LoadResult::NoCard;
 		}
-#ifdef DEBUG
-		Serial.println("Initialisation complete!");
-#endif
+		LOG("Initialisation complete!\r\n");
 
 		// Open settings.txt in the root.  Note the forward slash.  It is required.
 		File file = SD.open("/settings.txt");
 		if (!file)
 		{
-#ifdef DEBUG
-			Serial.println("settings.txt was not found.");
-#endif
+			LOG("settings.txt was not found.\r\n");
 			SD.end();
 			return LoadResult::NoFile;
 		}
 
 		if (file.size() > SETTINGS_FILE_MAX_BYTES)
 		{
-#ifdef DEBUG
-			Serial.printf("settings.txt is %u bytes, maximum is %d.  Using defaults.\r\n", (unsigned)file.size(), SETTINGS_FILE_MAX_BYTES);
-#endif
+			LOG("settings.txt is %u bytes, maximum is %d.  Using defaults.\r\n", (unsigned)file.size(), (int)SETTINGS_FILE_MAX_BYTES);
 			file.close();
 			SD.end();
 			return LoadResult::TooBig;
@@ -253,15 +228,11 @@ namespace settings
 
 		if (error)
 		{
-#ifdef DEBUG
-			Serial.printf("settings.txt is not valid JSON (%s).  Using defaults.\r\n", error.c_str());
-#endif
+			LOG("settings.txt is not valid JSON (%s).  Using defaults.\r\n", error.c_str());
 			return LoadResult::BadJson;
 		}
 
-#ifdef DEBUG
-		Serial.println("settings.txt was found and parsed.");
-#endif
+		LOG("settings.txt was found and parsed.\r\n");
 
 		// Apply each setting that is present and valid.  Invalid ones are logged and keep their default.
 		long number;
