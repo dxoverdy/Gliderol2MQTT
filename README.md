@@ -160,6 +160,11 @@ Gliderol2MQTT/request/perform/open
 Gliderol2MQTT/request/perform/stop
 ```
 
+You can also ask Gliderol2MQTT to reboot itself:
+```
+Gliderol2MQTT/request/perform/reboot
+```
+
 If you are integrating with HomeKit using Homebridge and MQTT-Thing, Gliderol2MQTT has you covered.  You use this topic instead:
 ```
 Gliderol2MQTT/set/target/door/state
@@ -208,6 +213,21 @@ Following an empty payload published to the topic 'Gliderol2MQTT/request/perform
 }
 ```
 *This indicates the action was triggered, but does not guarantee anything.  Your home automation will use the target and current states to report the outcome.*
+
+
+### request/perform/reboot
+Following an empty payload published to the topic 'Gliderol2MQTT/request/perform/reboot', you will receive a response on Gliderol2MQTT/response/perform/reboot, after which the device releases all relays, publishes `false` to connection_status and restarts.  The response payload is JSON akin to the following:
+```
+{
+    "statusValue": "setRebootSuccess"
+	,"done": true
+}
+```
+Once back online, Gliderol2MQTT/device/boot will show `"reset_reason": "software"`.
+
+
+### Retained command messages
+Command topics (perform open/close/stop/reboot and set/target/door/state) must not be published with the retain flag.  As a safeguard, Gliderol2MQTT deletes any retained message on its command topics each time it connects, and ignores commands arriving in the first 1.5 seconds after subscribing - otherwise a stray retained "open" would open the door, or a retained "reboot" would cause a reboot loop, every time the device reconnected.
 
 
 ## Other MQTT Topics
@@ -715,6 +735,8 @@ All the settings you configured in Definitions.h earlier can be put into a text 
 	"BOOT_UP_TARGET_STATE":0
 }
 ```
+Every setting is optional - anything left out keeps its compiled-in default.  The file must be valid JSON (watch out for a stray comma after the last entry); if it isn't, the screen shows `SETTINGS / BAD JSON` and none of it is used.  An individual value which is invalid (e.g. a port of 70000) is skipped and the rest still apply.  WiFi names and passwords may contain any characters, including spaces and symbols.  Older cards using `NORMALLY_OPEN`/`NORMALLY_CLOSED` instead of `RELAY_ACTIVE_LEVEL` still work.
+
 The absence of a Micro-SD card or absence of the settings.txt file will just result in Gliderol2MQTT using the defaults you have burned into the ESP32 as part of the initial programming.  The Micro-SD card is required at all times, that is, the results aren't burned into the ESP32's limited flash memory.  Doing so would create further issues downstream, i.e. how to clear them, etc.
 
 
@@ -790,6 +812,14 @@ Using
 Defaults...
 ```
 
+### settings.txt could not be used
+Shown for four seconds if settings.txt isn't valid JSON (`BAD JSON`) or is larger than 4KB (`TOO BIG`).  The compiled-in defaults are used instead.
+```
+SETTINGS
+BAD JSON
+Defaults..
+```
+
 ### Determining status
 When the device first starts it will pause for the longer of the two durations specified for door open time or door close time.  This is because when the device is first powered on it has no reliable way to know where the door is - it could be turned on whilst the door is opening.  So it waits before it starts to report a known status
 ```
@@ -798,19 +828,15 @@ Determine
 status...
 ```
 
-### Connecting to WiFi
-```
-Connecting
-WiFi...
-Version Number
-```
+### Connecting to WiFi and MQTT
+Gliderol2MQTT no longer stops on a "Connecting" screen.  It connects in the background and carries on monitoring the door - so the screen keeps showing the live door state even during a WiFi or broker outage.  The W and M in the status bar show whether WiFi and MQTT are currently connected.
 
-### Connecting to MQTT
+### Rebooting / OTA update
 ```
-Connecting
-MQTT...
-Version Number
+Rebooting
+...
 ```
+or, during an over-the-air update, `OTA / Updating / nn%`.
 
 ### Normal Operation
 The normal operating screen contains indicators H or L depending on whether the relevant pin on the ESP32 is high or low.  I used it for debugging but in the absence of needing the screen to do much else, I left it in.  OH would indicate the OPEN relay is active (high) and OL would indicate the OPEN relay is inactive (low).  S is the STOP relay, C is the CLOSE relay, T is the top sensor (if used) and B is the bottom sensor.  The bottom line shows one of Open, Closed, Stopped, Opening, Closing depending on what the door is doing.

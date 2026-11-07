@@ -14,6 +14,10 @@ Notes
 #ifndef _DEFINITIONS_h
 #define _DEFINITIONS_h
 
+// Helper macros to turn raw text definitions into true C++ strings, for the values injected from private.ini
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+
 
 // **************** Friendly Settings ****************
 // The device name is used as the MQTT base topic and presence on the network.
@@ -103,6 +107,14 @@ Notes
 // Library default is 15 however with this project carrying the security of a door I am using 5
 #define MQTT_SOCKET_TIMEOUT 5
 
+// While disconnected from the broker, how often to try reconnecting (milliseconds).  The main loop keeps running in
+// between - sensors are tracked and the display updated - so this only paces the attempts.
+#define MQTT_RETRY_INTERVAL 5000
+
+// The ESP32 reconnects to WiFi by itself, but occasionally gets stuck.  If WiFi has been down this long
+// (milliseconds), start the connection afresh.
+#define WIFI_RESTART_AFTER_MS 30000
+
 // These timers are used in the main loop.
 // How often to update the status on the screen
 #define DISPLAY_INTERVAL 250
@@ -158,6 +170,7 @@ enum mqttSubscriptions
 	requestPerformClose,
 	requestPerformOpen,
 	requestPerformStop,
+	requestPerformReboot,
 
 	requestValuePinClose,
 	requestValuePinOpen,
@@ -199,6 +212,7 @@ enum mqttSubscriptions
 #define MQTT_SUB_REQUEST_PERFORM_CLOSE "/request/perform/close"
 #define MQTT_SUB_REQUEST_PERFORM_OPEN "/request/perform/open"
 #define MQTT_SUB_REQUEST_PERFORM_STOP "/request/perform/stop"
+#define MQTT_SUB_REQUEST_PERFORM_REBOOT "/request/perform/reboot"
 #define MQTT_SUB_REQUEST_IS_OPEN "/request/is/open"
 #define MQTT_SUB_REQUEST_IS_CLOSED "/request/is/closed"
 #define MQTT_SUB_REQUEST_IS_STOPPED "/request/is/stopped"
@@ -207,6 +221,7 @@ enum mqttSubscriptions
 #define MQTT_SUB_RESPONSE_PERFORM_CLOSE "/response/perform/close"
 #define MQTT_SUB_RESPONSE_PERFORM_OPEN "/response/perform/open"
 #define MQTT_SUB_RESPONSE_PERFORM_STOP "/response/perform/stop"
+#define MQTT_SUB_RESPONSE_PERFORM_REBOOT "/response/perform/reboot"
 #define MQTT_SUB_RESPONSE_IS_OPEN "/response/is/open"
 #define MQTT_SUB_RESPONSE_IS_CLOSED "/response/is/closed"
 #define MQTT_SUB_RESPONSE_IS_STOPPED "/response/is/stopped"
@@ -251,7 +266,7 @@ enum mqttSubscriptions
 #define MAX_MQTT_STATUS_LENGTH 51
 #define OLED_CHARACTER_WIDTH 11				// Number of chars which can be displayed per line on the display
 #define SETTING_MAX_WIDTH 64				// Number of chars a JSON setting name can be
-#define SETTINGS_FILE_BUFFER 1024			// Total length of JSON settings buffer (files larger than this are rejected)
+#define SETTINGS_FILE_MAX_BYTES 4096		// settings.txt files larger than this are rejected
 #define DOOR_STATE_MAX_LENGTH 10
 #define DEBUG_MAX_LENGTH 256
 #define MQTT_TOPIC_MAX_LENGTH 256
@@ -319,6 +334,7 @@ enum statusValues
 	setOpenSuccess,
 	setStopSuccess,
 	setCloseSuccess,
+	setRebootSuccess,
 	payloadExceededCapacity,
 	addedToPayload,
 	notValidIncomingTopic
@@ -331,6 +347,7 @@ enum statusValues
 #define STATUS_SET_OPEN_SUCCESS_MQTT_DESC "setOpenSuccess"
 #define STATUS_SET_STOP_SUCCESS_MQTT_DESC "setStopSuccess"
 #define STATUS_SET_CLOSE_SUCCESS_MQTT_DESC "setCloseSuccess"
+#define STATUS_SET_REBOOT_SUCCESS_MQTT_DESC "setRebootSuccess"
 #define STATUS_PAYLOAD_EXCEEDED_CAPACITY_MQTT_DESC "payloadExceededCapacity"
 #define STATUS_ADDED_TO_PAYLOAD_MQTT_DESC "addedToPayload"
 #define STATUS_NOT_VALID_INCOMING_TOPIC_DESC "notValidIncomingTopic"

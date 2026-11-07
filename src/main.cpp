@@ -15,6 +15,7 @@ First, go and customise options at the top of Definitions.h!
 #include "Definitions.h"
 #include "Ota.h"
 #include "BootReport.h"
+#include "Settings.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -23,12 +24,6 @@ First, go and customise options at the top of Definitions.h!
 //#include <Adafruit_GFX.h>
 //#include <Adafruit_SSD1306.h>
 #include <Adafruit_SH110X.h>
-
-#include <SD.h>
-
-// Helper macros to turn raw text definitions into true C++ strings to help with injection from platformio's build process
-#define STRINGIFY(x) #x
-#define TOSTRING(x) STRINGIFY(x)
 
 // Device parameters
 char _version[6] = "v2.0";
@@ -56,20 +51,17 @@ char _oledLine3[OLED_CHARACTER_WIDTH] = "";
 char _oledLine4[OLED_CHARACTER_WIDTH] = "";
 
 
-// Customisable settings
-char _wifiSSID[SETTING_MAX_WIDTH] = TOSTRING(WIFI_SSID);
-char _wifiPassword[SETTING_MAX_WIDTH] = TOSTRING(WIFI_PASSWORD);
-char _mqttServer[SETTING_MAX_WIDTH] = TOSTRING(MQTT_BROKER);
-int _mqttPort = MQTT_PORT;
-char _mqttUsername[SETTING_MAX_WIDTH] = TOSTRING(MQTT_USERNAME);
-char _mqttPassword[SETTING_MAX_WIDTH] = TOSTRING(MQTT_PASSWORD);
-char _deviceName[SETTING_MAX_WIDTH] = DEVICE_NAME;
-bool _usingTopSensor = USING_TOP_SENSOR;
-int _doorCloseTime = TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN;
-int _doorOpenTime = TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED;
-int _relayActiveLevel = RELAY_ACTIVE_LEVEL;							// Pin level which switches a relay on (button pressed)
-int _relayIdleLevel = (RELAY_ACTIVE_LEVEL == HIGH) ? LOW : HIGH;		// Always the opposite - pin level which releases a relay
-int _bootUpTargetState = BOOT_UP_TARGET_STATE;
+// Customisable settings: compiled-in defaults, overridden by the SD card (see Settings.h)
+Settings _settings = settings::defaults();
+
+// Set by an MQTT reboot request; actioned from loop() once the response has been sent
+bool _rebootRequested = false;
+
+// The most recent target door state ("O"/"C"), re-sent after every reconnect.  Empty until there is one.
+char _lastTargetState[2] = "";
+
+// Set once BOOT_UP_TARGET_STATE has been considered (on the first MQTT connection)
+bool _bootTargetApplied = false;
 
 // When _forceMqttOnce = true, will force a one time MQTT publish of current state outside of the typical timer
 bool _forceMqttOnce = false;
@@ -95,13 +87,15 @@ char _doorStateHomeKit[2] = DOOR_STATE_HOMEKIT_UNKNOWN;
 
 char _macAddress[15] = "0xFFFFFFFFFFFF"; // 0xFFAAEEFFVVAA
 
-// Topic suffixes which make the door (or a relay) do something.  Used both to clear retained copies before
-// subscribing and to ignore commands arriving immediately after subscribing.
-const char* const DOOR_COMMAND_TOPICS[] =
+// Topic suffixes which make the device do something (move the door, switch a relay, reboot).  Used both to clear
+// retained copies before subscribing and to ignore commands arriving immediately after subscribing.  A retained
+// reboot command in particular would otherwise cause an endless reboot loop.
+const char* const COMMAND_TOPICS[] =
 {
 	MQTT_SUB_REQUEST_PERFORM_CLOSE,
 	MQTT_SUB_REQUEST_PERFORM_OPEN,
 	MQTT_SUB_REQUEST_PERFORM_STOP,
+	MQTT_SUB_REQUEST_PERFORM_REBOOT,
 	MQTT_HOMEKIT_SET_TARGET_DOOR_STATE,		// Apple HomeKit (Homebridge + MQTT-Thing) topic
 #ifdef ENABLE_DEV_TOPICS
 	MQTT_SUB_REQUEST_SET_VALUE_PIN_CLOSE,
@@ -146,20 +140,25 @@ Adafruit_SH1106G _display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire,
 /*
 Prototypes
 */
-void mqttReconnect();
+bool mqttConnect();
+void serviceMqtt();
+void startWifi();
+void serviceWifi();
+void onWifiConnected();
+void publishTargetState(const char* state);
+void rebootNow();
 statusValues addToPayload(const char* addition);
 void sendMqtt(char* topic, bool retain);
 void updateOLED(bool justStatus, const char* line2, const char* line3, const char* line4);
 void emptyPayload();
 void getDoorState();
-void setupWifi();
 void updateRunstate();
 void mqttCallback(char* topic, byte* message, unsigned int length);
 bool checkTimer(unsigned long* lastRun, unsigned long interval);
-void delayServicingOta(unsigned long ms);
+void delayServicingNetwork(unsigned long ms);
 void releaseAllRelays();
 int readDebounced(DebouncedInput& input, uint8_t pin);
-bool isDoorCommandTopic(const char* topic);
+bool isCommandTopic(const char* topic);
 void onOtaStart();
 void onOtaProgress(uint8_t percent);
 void onOtaEnd(bool success);
@@ -172,14 +171,12 @@ The setup function runs once when you press reset or power the board
 */
 void setup()
 {
-	char topicResponse[MQTT_TOPIC_MAX_LENGTH] = "";
-
 	// FIRST, before anything else: drive the relay pins to their released state.  Until pinMode() is called the
 	// pins float, and what a floating input does to the relay board is undefined.  These use the compiled-in
 	// polarity - the SD card hasn't been read yet - and are re-applied below once settings are known.
-	digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayIdleLevel);
-	digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayIdleLevel);
-	digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayIdleLevel);
+	digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _settings.relayIdleLevel());
+	digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _settings.relayIdleLevel());
+	digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _settings.relayIdleLevel());
 	pinMode(PIN_FOR_GARAGE_DOOR_CLOSE, OUTPUT);
 	pinMode(PIN_FOR_GARAGE_DOOR_OPEN, OUTPUT);
 	pinMode(PIN_FOR_GARAGE_DOOR_STOP, OUTPUT);
@@ -204,381 +201,39 @@ void setup()
 	// Record why we reset and bump the persistent boot counter (published to MQTT once connected)
 	bootreport::begin();
 
-
-
-
-	// Micro-SD Card stuff from here
-	char fileContents[SETTINGS_FILE_BUFFER];
-	unsigned int fileContentsLength;
-
-	// Variables for new JSON parser
-	int iSegNameCounter;
-	int iSegValueCounter;
-	int iPairNameCounter;
-	int iPairValueCounter;
-	int iCleanCounter;
-	int iCounter;
-
-	// All are emptied on creation as new arrays will just tend to have garbage in which would be recognised as actual content.
-	char pairNameRaw[SETTING_MAX_WIDTH] = "";
-	char pairNameClean[SETTING_MAX_WIDTH] = "";
-	char pairValueRaw[SETTING_MAX_WIDTH] = "";
-	char pairValueClean[SETTING_MAX_WIDTH] = "";
-
-	File myFile;
-#ifdef DEBUG
-	Serial.print("Initialising SD card...");
-#endif
-	if (!SD.begin(PIN_FOR_SDCARD_VSPI_CS))
+	// Load settings from the SD card, if there is one.  Any problem leaves the compiled-in defaults in place.
+	switch (settings::loadFromSd(_settings))
 	{
-#ifdef DEBUG
-		Serial.println("Initialisation failed!");
-#endif
-		// No SD Card or other failure, display a warning for four seconds on the screen
+	case settings::LoadResult::Loaded:
+	case settings::LoadResult::NoFile:
+		break;
+	case settings::LoadResult::NoCard:
 		updateOLED(false, "NO SD CARD", "Using", "Defaults..");
 		delay(4000);
-
+		break;
+	case settings::LoadResult::TooBig:
+		updateOLED(false, "SETTINGS", "TOO BIG", "Defaults..");
+		delay(4000);
+		break;
+	case settings::LoadResult::BadJson:
+		updateOLED(false, "SETTINGS", "BAD JSON", "Defaults..");
+		delay(4000);
+		break;
 	}
-	else
-	{
-#ifdef DEBUG
-		Serial.println("Initialisation complete!");
-#endif
-
-		// SD Card is a go, open settings.txt in the root.  Note the forward slash.  It is required.
-		myFile = SD.open("/settings.txt");
-		if (myFile)
-		{
-#ifdef DEBUG
-			Serial.println("settings.txt was found.");
-#endif
-
-
-			/*
-File Format:
-{
-	"WIFI_SSID":"",
-	"WIFI_PASSWORD":"",
-	"MQTT_SERVER":"192.168.1.40",
-	"MQTT_PORT":1883,
-	"MQTT_USERNAME":"Alpha",
-	"MQTT_PASSWORD":"Inverter1",
-	"DEVICE_NAME":"Gliderol2MQTT",
-	"USING_TOP_SENSOR":"Yes",
-	"TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED":10000,
-	"TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN":10000,
-	"RELAY_ACTIVE_LEVEL": "HIGH",
-	"BOOT_UP_TARGET_STATE" : 0
-}
-			*/
-
-			// Get the file size.  A file too large for the buffer is rejected outright rather than truncated -
-			// a truncated file could cut a password in half, which is worse than using the defaults.
-			fileContentsLength = myFile.size();
-			if (fileContentsLength > SETTINGS_FILE_BUFFER - 1)
-			{
-#ifdef DEBUG
-				sprintf(_debugOutput, "settings.txt is %u bytes, maximum is %d.  Using defaults.", fileContentsLength, SETTINGS_FILE_BUFFER - 1);
-				Serial.println(_debugOutput);
-#endif
-				fileContentsLength = 0;
-				updateOLED(false, "SETTINGS", "TOO BIG", "Defaults..");
-				delay(4000);
-			}
-			else
-			{
-				// Read the file into the buffer, trusting only what was actually read
-				fileContentsLength = myFile.readBytes(fileContents, fileContentsLength);
-			}
-			// Add the terminating null char
-			fileContents[fileContentsLength] = '\0';
-#ifdef DEBUG_LEVEL2
-			// Print the file size to the serial monitor.  (Not the contents - they include passwords.)
-			Serial.println(fileContentsLength);
-#endif
-			// Close the file
-			myFile.close();
-
-
-			// Rudimentary JSON parser here, saves on using a library
-			// Go through character by character
-			for (iCounter = 0; iCounter < fileContentsLength; iCounter++)
-			{
-				// Find a colon
-				if (fileContents[iCounter] == ':')
-				{
-					// Everything to left is name until reached the start, a comma or a left brace.
-					for (iSegNameCounter = iCounter - 1; iSegNameCounter >= 0; iSegNameCounter--)
-					{
-						if (fileContents[iSegNameCounter] == ',' || fileContents[iSegNameCounter] == '{')
-						{
-							iSegNameCounter++;
-							break;
-						}
-					}
-					if (iSegNameCounter < 0)
-					{
-						// If went beyond the start, correct
-						iSegNameCounter = 0;
-					}
-					// Segment name is now from the following character until before the colon
-					// Copy, but never beyond the buffer (leave room for the null terminator)
-					iPairNameCounter = 0;
-					for (int x = iSegNameCounter; x < iCounter && iPairNameCounter < SETTING_MAX_WIDTH - 1; x++)
-					{
-						pairNameRaw[iPairNameCounter] = fileContents[x];
-						iPairNameCounter++;
-					}
-					pairNameRaw[iPairNameCounter] = '\0';
-
-					// Everything to right is value until reached the end, a comma or a right brace.
-					for (iSegValueCounter = iCounter + 1; iSegValueCounter < fileContentsLength; iSegValueCounter++)
-					{
-						if (fileContents[iSegValueCounter] == ',' || fileContents[iSegValueCounter] == '}')
-						{
-							iSegValueCounter--;
-							break;
-						}
-					}
-					// Correct if went beyond the end
-					if (iSegValueCounter >= fileContentsLength)
-					{
-						// If went beyond end, correct
-						iSegValueCounter = fileContentsLength - 1;
-					}
-					// Segment value is now from the after the colon until the found character
-					// Copy, but never beyond the buffer (leave room for the null terminator)
-					iPairValueCounter = 0;
-					for (int x = iCounter + 1; x <= iSegValueCounter && iPairValueCounter < SETTING_MAX_WIDTH - 1; x++)
-					{
-						pairValueRaw[iPairValueCounter] = fileContents[x];
-						iPairValueCounter++;
-					}
-					pairValueRaw[iPairValueCounter] = '\0';
-
-
-					iPairNameCounter = 0;
-					iCleanCounter = 0;
-					while (pairNameRaw[iCleanCounter] != 0)
-					{
-						// Allow alpha numeric, upper case and lower case and underscore
-						if ((pairNameRaw[iCleanCounter] >= 'a' && pairNameRaw[iCleanCounter] <= 'z') || (pairNameRaw[iCleanCounter] >= 'A' && pairNameRaw[iCleanCounter] <= 'Z') || (pairNameRaw[iCleanCounter] >= '0' && pairNameRaw[iCleanCounter] <= '9') || pairNameRaw[iCleanCounter] == '_')
-						{
-							// Transfer Over
-							pairNameClean[iPairNameCounter] = pairNameRaw[iCleanCounter];
-							iPairNameCounter++;
-						}
-						iCleanCounter++;
-					}
-					pairNameClean[iPairNameCounter] = '\0';
-
-
-
-					iPairValueCounter = 0;
-					iCleanCounter = 0;
-					while (pairValueRaw[iCleanCounter] != 0)
-					{
-						// Allow alpha numeric, upper case and lower case and underscore, full stop, and @ 
-						if ((pairValueRaw[iCleanCounter] >= 'a' && pairValueRaw[iCleanCounter] <= 'z') || (pairValueRaw[iCleanCounter] >= 'A' && pairValueRaw[iCleanCounter] <= 'Z') || (pairValueRaw[iCleanCounter] >= '0' && pairValueRaw[iCleanCounter] <= '9') || pairValueRaw[iCleanCounter] == '_' || pairValueRaw[iCleanCounter] == '.' || pairValueRaw[iCleanCounter] == '@')
-						{
-							// Transfer Over
-							pairValueClean[iPairValueCounter] = pairValueRaw[iCleanCounter];
-							iPairValueCounter++;
-						}
-						iCleanCounter++;
-					}
-					pairValueClean[iPairValueCounter] = '\0';
-
-#ifdef DEBUG_LEVEL2
-					sprintf(_debugOutput, "Clean Name: \"%s\", Clean Value: \"%s\"", pairNameClean, pairValueClean);
-					Serial.println(_debugOutput);
-#endif
-
-					if (strncmp(pairNameClean, "WIFI_SSID", SETTING_MAX_WIDTH) == 0)
-					{
-#ifdef DEBUG
-						sprintf(_debugOutput, "Got WIFI_SSID, setting to \"%s\"", pairValueClean);
-						Serial.println(_debugOutput);
-#endif
-						strncpy(_wifiSSID, pairValueClean, SETTING_MAX_WIDTH);
-					}
-					else if (strncmp(pairNameClean, "WIFI_PASSWORD", SETTING_MAX_WIDTH) == 0)
-					{
-#ifdef DEBUG
-						Serial.println("Got WIFI_PASSWORD (value hidden)");
-#endif
-						strncpy(_wifiPassword, pairValueClean, SETTING_MAX_WIDTH);
-					}
-					else if (strncmp(pairNameClean, "MQTT_SERVER", SETTING_MAX_WIDTH) == 0)
-					{
-#ifdef DEBUG
-						sprintf(_debugOutput, "Got MQTT_SERVER, setting to \"%s\"", pairValueClean);
-						Serial.println(_debugOutput);
-#endif
-						strncpy(_mqttServer, pairValueClean, SETTING_MAX_WIDTH);
-					}
-					else if (strncmp(pairNameClean, "MQTT_PORT", SETTING_MAX_WIDTH) == 0)
-					{
-#ifdef DEBUG
-						sprintf(_debugOutput, "Got MQTT_PORT, setting to \"%s\"", pairValueClean);
-						Serial.println(_debugOutput);
-#endif
-						_mqttPort = atoi(pairValueClean);
-#ifdef DEBUG_LEVEL2
-						Serial.println(_mqttPort);
-#endif
-					}
-					else if (strncmp(pairNameClean, "MQTT_USERNAME", SETTING_MAX_WIDTH) == 0)
-					{
-#ifdef DEBUG
-						sprintf(_debugOutput, "Got MQTT_USERNAME, setting to \"%s\"", pairValueClean);
-						Serial.println(_debugOutput);
-#endif
-						strncpy(_mqttUsername, pairValueClean, SETTING_MAX_WIDTH);
-					}
-					else if (strncmp(pairNameClean, "MQTT_PASSWORD", SETTING_MAX_WIDTH) == 0)
-					{
-#ifdef DEBUG
-						Serial.println("Got MQTT_PASSWORD (value hidden)");
-#endif
-						strncpy(_mqttPassword, pairValueClean, SETTING_MAX_WIDTH);
-					}
-					else if (strncmp(pairNameClean, "DEVICE_NAME", SETTING_MAX_WIDTH) == 0)
-					{
-#ifdef DEBUG
-						sprintf(_debugOutput, "Got DEVICE_NAME, setting to \"%s\"", pairValueClean);
-						Serial.println(_debugOutput);
-#endif
-						strncpy(_deviceName, pairValueClean, SETTING_MAX_WIDTH);
-					}
-					else if (strncmp(pairNameClean, "USING_TOP_SENSOR", SETTING_MAX_WIDTH) == 0)
-					{
-#ifdef DEBUG
-						sprintf(_debugOutput, "Got USING_TOP_SENSOR, setting to \"%s\"", pairValueClean);
-						Serial.println(_debugOutput);
-#endif
-						_usingTopSensor = strncmp(pairValueClean, "Yes", SETTING_MAX_WIDTH) == 0 ? true : false;
-#ifdef DEBUG_LEVEL2
-						Serial.println(_usingTopSensor);
-#endif
-					}
-					else if (strncmp(pairNameClean, "TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN", SETTING_MAX_WIDTH) == 0)
-					{
-#ifdef DEBUG
-						sprintf(_debugOutput, "Got TIME_TO_FULLY_CLOSED_FROM_FULLY_OPEN, setting to \"%s\"", pairValueClean);
-						Serial.println(_debugOutput);
-#endif
-						_doorCloseTime = atoi(pairValueClean);
-#ifdef DEBUG_LEVEL2
-						Serial.println(_doorCloseTime);
-#endif
-					}
-					else if (strncmp(pairNameClean, "TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED", SETTING_MAX_WIDTH) == 0)
-					{
-#ifdef DEBUG
-						sprintf(_debugOutput, "Got TIME_TO_FULLY_OPEN_FROM_FULLY_CLOSED, setting to \"%s\"", pairValueClean);
-						Serial.println(_debugOutput);
-#endif
-						_doorOpenTime = atoi(pairValueClean);
-#ifdef DEBUG_LEVEL2
-						Serial.println(_doorOpenTime);
-#endif
-					}
-					else if (strncmp(pairNameClean, "RELAY_ACTIVE_LEVEL", SETTING_MAX_WIDTH) == 0 || strncmp(pairNameClean, "NORMALLY_OPEN", SETTING_MAX_WIDTH) == 0)
-					{
-						// NORMALLY_OPEN is the old name for this setting, still accepted so existing SD cards keep working.
-						// (The old NORMALLY_CLOSED key is ignored - the idle level is always the opposite of the active level.)
-#ifdef DEBUG
-						sprintf(_debugOutput, "Got %s, setting relay active level to \"%s\"", pairNameClean, pairValueClean);
-						Serial.println(_debugOutput);
-#endif
-						_relayActiveLevel = strncmp(pairValueClean, "HIGH", SETTING_MAX_WIDTH) == 0 ? HIGH : LOW;
-						_relayIdleLevel = (_relayActiveLevel == HIGH) ? LOW : HIGH;
-#ifdef DEBUG_LEVEL2
-						Serial.println(_relayActiveLevel);
-#endif
-					}
-					else if (strncmp(pairNameClean, "BOOT_UP_TARGET_STATE", SETTING_MAX_WIDTH) == 0)
-					{
-#ifdef DEBUG
-						sprintf(_debugOutput, "Got BOOT_UP_TARGET_STATE, setting to \"%s\"", pairValueClean);
-						Serial.println(_debugOutput);
-#endif
-						_bootUpTargetState = atoi(pairValueClean);
-#ifdef DEBUG_LEVEL2
-						Serial.println(_bootUpTargetState);
-#endif
-					}
-				}
-			}
-
-		}
-		else
-		{
-			// if the file didn't open, print an error:
-#ifdef DEBUG
-			Serial.println("settings.txt was not found.");
-#endif
-		}
-
-	}
-	
-	SD.end();
-
-
-
-
 
 	// Re-apply the released state now the SD card may have changed the relay polarity
 	releaseAllRelays();
 
-	// Configure WIFI.  This also starts the OTA listener, so from here on the device can be reflashed
-	// remotely even if something later in boot (e.g. MQTT) never succeeds.
-	setupWifi();
 
+	// One time MQTT configuration on boot.  The connection itself is made (and remade) from loop().
+	_mqtt.setServer(_settings.mqttServer, _settings.mqttPort);
 
-	// We will pause here for the longest of the opening/closing durations
-	// Because on boot-up, we've no way of determining what is happening
-	// So if we wait here until we can be assured the door isn't mid way opening/closing
-	// We can reliably go on to determine state going foward.  OTA is serviced during the wait.
-	updateOLED(false, "", "Determine", "status...");
-#ifdef DEBUG
-	Serial.printf("Determining status (waiting %d ms)\r\n", _doorCloseTime > _doorOpenTime ? _doorCloseTime : _doorOpenTime);
-#endif
-	unsigned long settleStart = millis();
-	delayServicingOta(_doorCloseTime > _doorOpenTime ? _doorCloseTime : _doorOpenTime);
-	updateOLED(false, "", "", _version);
-#ifdef DEBUG
-	Serial.printf("Determining status complete after %lu ms\r\n", millis() - settleStart);
-#else
-	(void)settleStart;
-#endif
-
-
-	// One time MQTT configuration on boot
-	// Configure MQTT to the address and port specified in the config
-	_mqtt.setServer(_mqttServer, _mqttPort);
-
-
-#ifdef DEBUG_LEVEL2
-	sprintf(_debugOutput, "About to request buffer");
-	Serial.println(_debugOutput);
-#endif
 	_bufferSize = (MAX_MQTT_PAYLOAD_SIZE + MQTT_HEADER_SIZE);
-#ifdef DEBUG_LEVEL2
-		sprintf(_debugOutput, "Requesting a buffer of : %d bytes", _bufferSize);
-		Serial.println(_debugOutput);
-#endif
 	_mqtt.setBufferSize(_bufferSize);
 	_maxPayloadSize = _bufferSize - MQTT_HEADER_SIZE;
-#ifdef DEBUG_LEVEL2
-			sprintf(_debugOutput, "_bufferSize: %d,\r\n\r\n_maxPayload (Including null terminator): %d", _bufferSize, _maxPayloadSize);
-			Serial.println(_debugOutput);
-#endif
 	// Example, 2048, if declared as 2048 is positions 0 to 2047, and position 2047 needs to be zero.  2047 usable chars in payload.
 	_mqttPayload = new char[_maxPayloadSize];
 	emptyPayload();
-	
 
 	// And any messages we are subscribed to will be pushed to the mqttCallback function for processing
 	_mqtt.setCallback(mqttCallback);
@@ -587,119 +242,169 @@ File Format:
 	_mqtt.setKeepAlive(MQTT_KEEP_ALIVE);
 	_mqtt.setSocketTimeout(MQTT_SOCKET_TIMEOUT);
 
-	// Connect to MQTT
-	mqttReconnect();
+
+	// Start connecting to WiFi.  This doesn't wait: serviceWifi() notices when the connection comes up and starts
+	// OTA and NTP, so the device becomes reflashable during the settle wait below.
+	startWifi();
 
 
-	// Boot up target state?
-	if (_bootUpTargetState == BOOT_TARGET_STATE_CLOSED)
-	{
+	// We will pause here for the longest of the opening/closing durations
+	// Because on boot-up, we've no way of determining what is happening
+	// So if we wait here until we can be assured the door isn't mid way opening/closing
+	// We can reliably go on to determine state going foward.  WiFi and OTA are serviced during the wait.
+	updateOLED(false, "", "Determine", "status...");
 #ifdef DEBUG
-	sprintf(_debugOutput, "Setting boot target state Closed");
-	Serial.println(_debugOutput);
+	Serial.printf("Determining status (waiting %lu ms)\r\n", _settings.longestDoorTimeMs());
 #endif
-		// Send out target closed
-		// Let HomeKit know of the updated target state
-		emptyPayload();
-		addToPayload(DOOR_STATE_HOMEKIT_CLOSED);
-		sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
-		sendMqtt(topicResponse, true);
-		emptyPayload();
-
-	}
-	else if (_bootUpTargetState == BOOT_TARGET_STATE_OPEN)
-	{
-#ifdef DEBUG
-	sprintf(_debugOutput, "Setting boot target state Open");
-	Serial.println(_debugOutput);
-#endif
-		// Send out target open
-		// Let HomeKit know of the updated target state
-		emptyPayload();
-		addToPayload(DOOR_STATE_HOMEKIT_OPEN);
-		sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
-		sendMqtt(topicResponse, true);
-		emptyPayload();
-	}
-
-
+	unsigned long settleStart = millis();
+	delayServicingNetwork(_settings.longestDoorTimeMs());
 	updateOLED(false, "", "", _version);
+#ifdef DEBUG
+	Serial.printf("Determining status complete after %lu ms\r\n", millis() - settleStart);
+#else
+	(void)settleStart;
+#endif
 }
 
 
 
-
-
 /*
-setupWifi()
+startWifi()
 
-Connect to WiFi
+Begin connecting to WiFi.  Returns immediately - serviceWifi() tracks the connection from then on.
 */
-void setupWifi()
+void startWifi()
 {
-	// We start by connecting to a WiFi network
 #ifdef DEBUG
-	sprintf(_debugOutput, "Connecting to %s", _wifiSSID);
-	Serial.println(_debugOutput);
+	Serial.printf("Connecting to %s\r\n", _settings.wifiSsid);
 #endif
 
 	// Set the hostname for this device.  On the ESP32 this only takes effect if done BEFORE WiFi.mode()/WiFi.begin().
-	WiFi.setHostname(_deviceName);
+	WiFi.setHostname(_settings.deviceName);
 
 	// Set up in Station Mode - Will be connecting to an access point
 	WiFi.mode(WIFI_STA);
+	WiFi.setAutoReconnect(true);
+	WiFi.begin(_settings.wifiSsid, _settings.wifiPassword);
+}
 
-	// And connect to the details defined at the top
-	WiFi.begin(_wifiSSID, _wifiPassword);
 
-	// And continually try to connect to WiFi.  If it doesn't, the device will just wait here before continuing
-	while (WiFi.status() != WL_CONNECTED)
+
+/*
+serviceWifi()
+
+Call often; never blocks.  Notices the WiFi connection coming up or dropping, and restarts the connection if the
+ESP32's own automatic reconnection appears to be stuck.
+*/
+void serviceWifi()
+{
+	static bool wasConnected = false;
+	static unsigned long disconnectedSince = 0;
+
+	bool connected = (WiFi.status() == WL_CONNECTED);
+
+	if (connected && !wasConnected)
 	{
-		delay(250);
-		updateOLED(false, "Connecting", "WiFi...", _version);
+		onWifiConnected();
 	}
+	else if (!connected && wasConnected)
+	{
+#ifdef DEBUG
+		Serial.println("WiFi connection lost - reconnecting in the background");
+#endif
+		disconnectedSince = millis();
+	}
+	else if (!connected && millis() - disconnectedSince >= WIFI_RESTART_AFTER_MS)
+	{
+#ifdef DEBUG
+		Serial.println("WiFi still down - restarting the connection");
+#endif
+		WiFi.disconnect();
+		WiFi.begin(_settings.wifiSsid, _settings.wifiPassword);
+		disconnectedSince = millis();
+	}
+
+	wasConnected = connected;
+}
+
+
+
+/*
+onWifiConnected()
+
+Called by serviceWifi() each time the WiFi connection comes up.
+*/
+void onWifiConnected()
+{
+	static bool firstConnection = true;
 
 	// Get the mac to use a unique device identifier in Home Assistant in potential future developments
 	uint8_t macAddress[WL_MAC_ADDR_LENGTH];
 	WiFi.macAddress(macAddress);
 	sprintf(_macAddress, "0x%02x%02x%02x%02x%02x%02x", macAddress[0], macAddress[1], macAddress[2], macAddress[3], macAddress[4], macAddress[5]);
 
-
-	// Output some debug information
 #ifdef DEBUG
-	sprintf(_debugOutput, "WiFi connected, IP: %s, MAC: %s", WiFi.localIP().toString().c_str(), _macAddress);
-	Serial.println(_debugOutput);
+	Serial.printf("WiFi connected, IP: %s, MAC: %s\r\n", WiFi.localIP().toString().c_str(), _macAddress);
 #endif
 
-	// Start listening for over-the-air updates.  Only the first call does anything, so reconnects are harmless.
-	ota::Hooks otaHooks;
-	otaHooks.onStart = onOtaStart;
-	otaHooks.onProgress = onOtaProgress;
-	otaHooks.onEnd = onOtaEnd;
-	ota::begin(_deviceName, TOSTRING(OTA_PASSWORD), OTA_PORT, otaHooks);
-
-	// Start NTP so the boot report can carry a real timestamp.  Only needed once - it keeps itself in sync after.
-	static bool clockStarted = false;
-	if (!clockStarted)
+	if (firstConnection)
 	{
-		bootreport::startClock();
-		clockStarted = true;
-	}
+		firstConnection = false;
 
-	// Connected, so ditch out with blank screen
-	updateOLED(false, "", "", _version);
+		// Start listening for over-the-air updates
+		ota::Hooks otaHooks;
+		otaHooks.onStart = onOtaStart;
+		otaHooks.onProgress = onOtaProgress;
+		otaHooks.onEnd = onOtaEnd;
+		ota::begin(_settings.deviceName, TOSTRING(OTA_PASSWORD), OTA_PORT, otaHooks);
+
+		// Start NTP so the boot report can carry a real timestamp.  It keeps itself in sync after this.
+		bootreport::startClock();
+	}
 }
 
 
 
 /*
-mqttReconnect()
+serviceMqtt()
 
-This function disconnects and reconnects the ESP32 to the MQTT broker, as such,
-it doesn't discern whether an existing connection is active.  That needs to be done by the
-calling function first to prevent a needless disconnect and reconnect.
+Call often.  While connected, processes incoming messages (which may run mqttCallback).  While disconnected, makes
+one connection attempt every MQTT_RETRY_INTERVAL - in between, the rest of the loop carries on as normal.
 */
-void mqttReconnect()
+void serviceMqtt()
+{
+	static unsigned long lastAttempt = 0;
+	static bool attempted = false;
+
+	if (_mqtt.connected())
+	{
+		_mqtt.loop();
+		return;
+	}
+
+	if (WiFi.status() != WL_CONNECTED)
+	{
+		return;
+	}
+
+	if (attempted && millis() - lastAttempt < MQTT_RETRY_INTERVAL)
+	{
+		return;
+	}
+
+	attempted = true;
+	lastAttempt = millis();
+	mqttConnect();
+}
+
+
+
+/*
+mqttConnect()
+
+One attempt to connect to the broker and set up subscriptions.  Returns true on success.
+*/
+bool mqttConnect()
 {
 	bool connectedAndSetupSuccessfully = false;
 	char topic[MQTT_TOPIC_MAX_LENGTH];
@@ -717,26 +422,12 @@ void mqttReconnect()
 		MQTT_SUB_REQUEST_VALUE_PIN_BOTTOM_SENSOR,
 	};
 
-	// Loop until we're reconnected
-	while (true)
-	{
-		connectedAndSetupSuccessfully = false;
-
-		// No point trying MQTT without WiFi - get that back first.
-		if (WiFi.status() != WL_CONNECTED)
-		{
-			setupWifi();
-		}
-
-		_mqtt.disconnect();
-		delayServicingOta(200);
+	// Make sure any half-dead previous connection is closed first
+	_mqtt.disconnect();
 
 #ifdef DEBUG
-		Serial.print("Attempting MQTT connection...");
+	Serial.print("Attempting MQTT connection...");
 #endif
-
-		updateOLED(false, "Connecting", "MQTT...", _version);
-		delayServicingOta(100);
 
 /*
 clientID const char[] - the client ID to use when connecting to the server
@@ -751,74 +442,151 @@ willMessage const char[] - the payload of the will message
 cleanSession boolean (optional) - whether to connect clean-session or not
 */
 
-		// Create a will topic, i.e. Gliderol2MQTT/connection_status
-		snprintf(topic, sizeof(topic), "%s%s", _deviceName, MQTT_CONNECTION_STATUS);
+	// Create a will topic, i.e. Gliderol2MQTT/connection_status
+	snprintf(topic, sizeof(topic), "%s%s", _settings.deviceName, MQTT_CONNECTION_STATUS);
 
-		// Attempt to connect, with a will which will be retained as Disconnected in the event of drop.
-		if (_mqtt.connect(_deviceName, _mqttUsername, _mqttPassword, topic, 0, true, "false", true))
+	// Attempt to connect, with a will which will be retained as Disconnected in the event of drop.
+	if (_mqtt.connect(_settings.deviceName, _settings.mqttUsername, _settings.mqttPassword, topic, 0, true, "false", true))
+	{
+#ifdef DEBUG
+		Serial.println("Connected MQTT");
+#endif
+
+		// Send out a birth showing connection status of Connected, retained
+		connectedAndSetupSuccessfully = _mqtt.publish(topic, "true", true);
+
+		for (const char* suffix : COMMAND_TOPICS)
 		{
-#ifdef DEBUG
-			Serial.println("Connected MQTT");
-#endif
-
-			// Send out a birth showing connection status of Connected, retained
-			connectedAndSetupSuccessfully = _mqtt.publish(topic, "true", true);
-
-			for (const char* suffix : DOOR_COMMAND_TOPICS)
-			{
-				snprintf(topic, sizeof(topic), "%s%s", _deviceName, suffix);
-				// A zero-length retained publish deletes any retained message on that topic.  The broker handles
-				// our packets in order, so the delete is processed before the subscribe that follows it.
-				connectedAndSetupSuccessfully = connectedAndSetupSuccessfully && _mqtt.publish(topic, "", true);
-				connectedAndSetupSuccessfully = connectedAndSetupSuccessfully && _mqtt.subscribe(topic);
-			}
-
-			for (const char* suffix : queryTopics)
-			{
-				snprintf(topic, sizeof(topic), "%s%s", _deviceName, suffix);
-				connectedAndSetupSuccessfully = connectedAndSetupSuccessfully && _mqtt.subscribe(topic);
-			}
-
-			// Start the window during which door commands are ignored (second line of defence against replays)
-			_mqttSubscribedAt = millis();
-
-			if (connectedAndSetupSuccessfully)
-			{
-				// Publish the current state straight away rather than waiting for the periodic heartbeat - the broker
-				// may have restarted and lost its retained copy.
-				_forceMqttOnce = true;
-
-				// Once per boot: publish when/why/which firmware we started with (retained, so it's always there to read)
-				if (!_bootReportPublished)
-				{
-					char bootReport[320];
-					snprintf(topic, sizeof(topic), "%s%s", _deviceName, MQTT_DEVICE_BOOT);
-					if (bootreport::toJson(bootReport, sizeof(bootReport), _version, WiFi.localIP().toString().c_str(), _macAddress))
-					{
-						_bootReportPublished = _mqtt.publish(topic, bootReport, true);
-#ifdef DEBUG
-						Serial.println(bootReport);
-#endif
-					}
-				}
-
-				// Connected, so ditch out with runstate on the screen
-				updateRunstate();
-				break;
-			}
+			snprintf(topic, sizeof(topic), "%s%s", _settings.deviceName, suffix);
+			// A zero-length retained publish deletes any retained message on that topic.  The broker handles
+			// our packets in order, so the delete is processed before the subscribe that follows it.
+			connectedAndSetupSuccessfully = connectedAndSetupSuccessfully && _mqtt.publish(topic, "", true);
+			connectedAndSetupSuccessfully = connectedAndSetupSuccessfully && _mqtt.subscribe(topic);
 		}
 
-		if (!connectedAndSetupSuccessfully)
+		for (const char* suffix : queryTopics)
 		{
-#ifdef DEBUG
-			sprintf(_debugOutput, "MQTT Failed: RC is %d\r\nTrying again in three seconds...", _mqtt.state());
-			Serial.println(_debugOutput);
-#endif
+			snprintf(topic, sizeof(topic), "%s%s", _settings.deviceName, suffix);
+			connectedAndSetupSuccessfully = connectedAndSetupSuccessfully && _mqtt.subscribe(topic);
 		}
 
-		// Wait 3 seconds before retrying, staying reachable for OTA meanwhile
-		delayServicingOta(3000);
+		// Start the window during which commands are ignored (second line of defence against replays)
+		_mqttSubscribedAt = millis();
 	}
+
+	if (!connectedAndSetupSuccessfully)
+	{
+#ifdef DEBUG
+		Serial.printf("MQTT Failed: RC is %d.  Retrying in %d seconds.\r\n", _mqtt.state(), MQTT_RETRY_INTERVAL / 1000);
+#endif
+		return false;
+	}
+
+	// Publish the current state straight away rather than waiting for the periodic heartbeat - the broker
+	// may have restarted and lost its retained copy.
+	_forceMqttOnce = true;
+
+	// Once per boot: publish when/why/which firmware we started with (retained, so it's always there to read)
+	if (!_bootReportPublished)
+	{
+		char bootReport[320];
+		snprintf(topic, sizeof(topic), "%s%s", _settings.deviceName, MQTT_DEVICE_BOOT);
+		if (bootreport::toJson(bootReport, sizeof(bootReport), _version, WiFi.localIP().toString().c_str(), _macAddress))
+		{
+			_bootReportPublished = _mqtt.publish(topic, bootReport, true);
+#ifdef DEBUG
+			Serial.println(bootReport);
+#endif
+		}
+	}
+
+	// Target state.  On the first connection apply BOOT_UP_TARGET_STATE - unless the door has already been used since
+	// boot, in which case that is the truth.  On every connection re-send the latest target, in case it changed while
+	// we were offline (otherwise HomeKit can be left showing e.g. "Opening..." against a door that is long since shut).
+	if (!_bootTargetApplied)
+	{
+		_bootTargetApplied = true;
+		if (_lastTargetState[0] == '\0')
+		{
+			if (_settings.bootUpTargetState == BOOT_TARGET_STATE_CLOSED)
+			{
+				strlcpy(_lastTargetState, DOOR_STATE_HOMEKIT_CLOSED, sizeof(_lastTargetState));
+			}
+			else if (_settings.bootUpTargetState == BOOT_TARGET_STATE_OPEN)
+			{
+				strlcpy(_lastTargetState, DOOR_STATE_HOMEKIT_OPEN, sizeof(_lastTargetState));
+			}
+		}
+	}
+	if (_lastTargetState[0] != '\0')
+	{
+		publishTargetState(_lastTargetState);
+	}
+
+	return true;
+}
+
+
+
+/*
+publishTargetState()
+
+Publish (retained) the door's target state for HomeKit/MQTT-Thing, and remember it so it can be re-sent after a
+reconnect.  If we're offline it is simply remembered.
+*/
+void publishTargetState(const char* state)
+{
+	char topic[MQTT_TOPIC_MAX_LENGTH];
+
+	if (state != _lastTargetState)
+	{
+		strlcpy(_lastTargetState, state, sizeof(_lastTargetState));
+	}
+
+	if (!_mqtt.connected())
+	{
+		return;
+	}
+
+	snprintf(topic, sizeof(topic), "%s%s", _settings.deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
+	if (!_mqtt.publish(topic, _lastTargetState, true))
+	{
+#ifdef DEBUG
+		Serial.printf("MQTT publish failed to %s\r\n", topic);
+#endif
+	}
+}
+
+
+
+/*
+rebootNow()
+
+Cleanly restart the device (requested via MQTT).
+*/
+void rebootNow()
+{
+	char topic[MQTT_TOPIC_MAX_LENGTH];
+
+#ifdef DEBUG
+	Serial.println("Rebooting on request");
+#endif
+
+	releaseAllRelays();
+	updateOLED(false, "", "Rebooting", "...");
+
+	if (_mqtt.connected())
+	{
+		// A clean disconnect does NOT trigger the last will, so say we're going offline ourselves.
+		// The birth message sets this back to true once we're back.
+		snprintf(topic, sizeof(topic), "%s%s", _settings.deviceName, MQTT_CONNECTION_STATUS);
+		_mqtt.publish(topic, "false", true);
+		_mqtt.disconnect();
+	}
+
+	// Give the network stack a moment to send the final packets
+	delay(250);
+	ESP.restart();
 }
 
 
@@ -826,7 +594,8 @@ cleanSession boolean (optional) - whether to connect clean-session or not
 /*
 loop()
 
-The loop function runs over and over again until power down or reset
+The loop function runs over and over again until power down or reset.  Nothing in here waits on the network,
+so the sensors and display stay live through WiFi or broker outages.
 */
 void loop()
 {
@@ -835,67 +604,25 @@ void loop()
 	// Service over-the-air updates first, so a bug further down can't lock us out of remote flashing
 	ota::handle();
 
-	// Refresh the status bar (activity asterisk, W and M indicators).  Throttled because every redraw pushes the
-	// whole screen over I2C (~25ms) and, now getDoorState() no longer sleeps, the loop runs far more often than before.
-	if (checkTimer(&lastStatusBarRefresh, UPDATE_STATUS_BAR_INTERVAL))
-	{
-		updateOLED(true, "", "", "");
-	}
+	// Keep WiFi and MQTT connected, and process any incoming messages (which may action door commands)
+	serviceWifi();
+	serviceMqtt();
 
-	// Make sure WiFi is good
-	if (WiFi.status() != WL_CONNECTED)
+	// A reboot requested over MQTT happens here, after its response has been sent
+	if (_rebootRequested)
 	{
-		setupWifi();
-	}
-
-	// Make sure mqtt is still connected and process any messages (_mqtt.loop())
-	if ((!_mqtt.connected()) || !_mqtt.loop())
-	{
-		mqttReconnect();
+		rebootNow();
 	}
 
 	// Update runstate.  By this point any MQTT messages instructing to open/close have been actioned
 	updateRunstate();
+
+	// Keep the status bar (activity asterisk, W and M indicators) current even when nothing else changes
+	if (checkTimer(&lastStatusBarRefresh, UPDATE_STATUS_BAR_INTERVAL))
+	{
+		updateOLED(true, "", "", "");
+	}
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -923,15 +650,16 @@ bool checkTimer(unsigned long* lastRun, unsigned long interval)
 
 
 /*
-delayServicingOta()
+delayServicingNetwork()
 
-Like delay(), but keeps the OTA listener serviced so the device stays reflashable during long waits.
+Like delay(), but keeps WiFi and the OTA listener serviced so the device stays reflashable during long waits.
 */
-void delayServicingOta(unsigned long ms)
+void delayServicingNetwork(unsigned long ms)
 {
 	unsigned long start = millis();
 	while (millis() - start < ms)
 	{
+		serviceWifi();
 		ota::handle();
 		delay(10);
 	}
@@ -945,9 +673,9 @@ Put all three relays into their released (idle) state.
 */
 void releaseAllRelays()
 {
-	digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayIdleLevel);
-	digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayIdleLevel);
-	digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayIdleLevel);
+	digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _settings.relayIdleLevel());
+	digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _settings.relayIdleLevel());
+	digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _settings.relayIdleLevel());
 }
 
 
@@ -999,7 +727,7 @@ void onOtaStart()
 	// Tell home automation we're going offline.  The birth message will set this back to true after the reboot.
 	if (_mqtt.connected())
 	{
-		snprintf(topic, sizeof(topic), "%s%s", _deviceName, MQTT_CONNECTION_STATUS);
+		snprintf(topic, sizeof(topic), "%s%s", _settings.deviceName, MQTT_CONNECTION_STATUS);
 		_mqtt.publish(topic, "false", true);
 	}
 
@@ -1033,7 +761,7 @@ void onOtaEnd(bool success)
 		// We said we were going offline - we're not, so correct that.
 		if (_mqtt.connected())
 		{
-			snprintf(topic, sizeof(topic), "%s%s", _deviceName, MQTT_CONNECTION_STATUS);
+			snprintf(topic, sizeof(topic), "%s%s", _settings.deviceName, MQTT_CONNECTION_STATUS);
 			_mqtt.publish(topic, "true", true);
 		}
 		delay(2000);
@@ -1042,19 +770,19 @@ void onOtaEnd(bool success)
 
 
 /*
-isDoorCommandTopic()
+isCommandTopic()
 
-True if the topic is one which makes the door (or a relay) do something.
+True if the topic is one which makes the device do something (see COMMAND_TOPICS).
 */
-bool isDoorCommandTopic(const char* topic)
+bool isCommandTopic(const char* topic)
 {
-	size_t prefixLength = strlen(_deviceName);
-	if (strncmp(topic, _deviceName, prefixLength) != 0)
+	size_t prefixLength = strlen(_settings.deviceName);
+	if (strncmp(topic, _settings.deviceName, prefixLength) != 0)
 	{
 		return false;
 	}
 
-	for (const char* suffix : DOOR_COMMAND_TOPICS)
+	for (const char* suffix : COMMAND_TOPICS)
 	{
 		if (strcmp(topic + prefixLength, suffix) == 0)
 		{
@@ -1076,49 +804,19 @@ void updateOLED(bool justStatus, const char* line2, const char* line3, const cha
 {
 	static unsigned long updateStatusBar = 0;
 
-
-	_display.clearDisplay();
-	_display.setTextSize(2);
-	//_display.setTextColor(WHITE);
-	_display.setTextColor(SH110X_WHITE);
-	_display.setCursor(0, 0);
+	// What is currently on the screen, so we only redraw when something has actually changed.  Each redraw pushes
+	// the whole 1KB screen buffer over I2C (~25ms), so skipping identical frames matters.
+	static char drawn[4][OLED_CHARACTER_WIDTH] = { "", "", "", "" };
+	static bool everDrawn = false;
 
 	char line1Contents[OLED_CHARACTER_WIDTH];
-	char line2Contents[OLED_CHARACTER_WIDTH];
-	char line3Contents[OLED_CHARACTER_WIDTH];
-	char line4Contents[OLED_CHARACTER_WIDTH];
 
-	// Ensure only dealing with 10 chars passed in, and null terminate.
-	if (strlen(line2) > OLED_CHARACTER_WIDTH - 1)
+	if (!justStatus)
 	{
-		strncpy(line2Contents, line2, OLED_CHARACTER_WIDTH - 1);
-		line2Contents[OLED_CHARACTER_WIDTH - 1] = 0;
-	}
-	else
-	{
-		strcpy(line2Contents, line2);
-	}
-
-
-	if (strlen(line3) > OLED_CHARACTER_WIDTH - 1)
-	{
-		strncpy(line3Contents, line3, OLED_CHARACTER_WIDTH - 1);
-		line3Contents[OLED_CHARACTER_WIDTH - 1] = 0;
-	}
-	else
-	{
-		strcpy(line3Contents, line3);
-	}
-
-
-	if (strlen(line4) > OLED_CHARACTER_WIDTH - 1)
-	{
-		strncpy(line4Contents, line4, OLED_CHARACTER_WIDTH - 1);
-		line4Contents[OLED_CHARACTER_WIDTH - 1] = 0;
-	}
-	else
-	{
-		strcpy(line4Contents, line4);
+		// Store the new detail lines, truncated to the 10 characters which fit on the display
+		strlcpy(_oledLine2, line2, sizeof(_oledLine2));
+		strlcpy(_oledLine3, line3, sizeof(_oledLine3));
+		strlcpy(_oledLine4, line4, sizeof(_oledLine4));
 	}
 
 	// Only update the operating indicator once per half second.
@@ -1132,48 +830,33 @@ void updateOLED(bool justStatus, const char* line2, const char* line3, const cha
 	// Note: only _mqtt.connected() here, never _mqtt.loop() - loop() processes incoming messages, and drawing
 	// the screen must never be able to trigger a door command part-way through.
 	snprintf(line1Contents, sizeof(line1Contents), "%s%c%c%c", "G2M    ", _oledOperatingIndicator, (WiFi.status() == WL_CONNECTED ? 'W' : ' '), (_mqtt.connected() ? 'M' : ' '));
-	_display.println(line1Contents);
 
+	const char* lines[4] = { line1Contents, _oledLine2, _oledLine3, _oledLine4 };
 
-
-
-	// Next line
-	_display.setCursor(0, 16);
-	if (!justStatus)
+	bool changed = !everDrawn;
+	for (int i = 0; i < 4 && !changed; i++)
 	{
-		_display.println(line2Contents);
-		strcpy(_oledLine2, line2Contents);
+		changed = (strcmp(lines[i], drawn[i]) != 0);
 	}
-	else
+	if (!changed)
 	{
-		_display.println(_oledLine2);
+		return;
 	}
 
-
-
-	_display.setCursor(0, 32);
-	if (!justStatus)
+	_display.clearDisplay();
+	_display.setTextSize(2);
+	_display.setTextColor(SH110X_WHITE);
+	for (int i = 0; i < 4; i++)
 	{
-		_display.println(line3Contents);
-		strcpy(_oledLine3, line3Contents);
-	}
-	else
-	{
-		_display.println(_oledLine3);
+		// 16 pixels per line at text size 2
+		_display.setCursor(0, i * 16);
+		_display.println(lines[i]);
+		strlcpy(drawn[i], lines[i], sizeof(drawn[i]));
 	}
 
-	_display.setCursor(0, 48);
-	if (!justStatus)
-	{
-		_display.println(line4Contents);
-		strcpy(_oledLine4, line4Contents);
-	}
-	else
-	{
-		_display.println(_oledLine4);
-	}
 	// Refresh the display
 	_display.display();
+	everDrawn = true;
 }
 
 
@@ -1229,7 +912,7 @@ void updateRunstate()
 		pinBottomSensorValue = digitalRead(PIN_FOR_BOTTOM_SENSOR);
 		
 		sprintf(relaysLine, "O%s, S%s, C%s", pinOpenValue == 1 ? "H" : "L", pinStopValue == 1 ? "H" : "L", pinCloseValue == 1 ? "H" : "L");
-		if (_usingTopSensor)
+		if (_settings.usingTopSensor)
 		{
 			sprintf(pinsLine, "T%s, B%s", pinTopSensorValue == 1 ? "H" : "L", pinBottomSensorValue == 1 ? "H" : "L");
 		}
@@ -1249,7 +932,7 @@ void updateRunstate()
 		_forceMqttOnce = false;
 
 		// getCurrentDoorState for HomeKit
-		sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_CURRENT_DOOR_STATE);
+		sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_HOMEKIT_GET_CURRENT_DOOR_STATE);
 		strcpy(stateAddition, _doorStateHomeKit);
 
 		resultAddedToPayload = addToPayload(stateAddition);
@@ -1278,7 +961,6 @@ void getDoorState()
 	bool isClosed;
 	bool isStopped;
 	bool stillWithinTimer = false;
-	char topicResponse[MQTT_TOPIC_MAX_LENGTH] = "";
 	bool skipDoorCloseTimerDueToFobAndNoTopSensor = false;
 
 #ifdef DEBUG_LEVEL2
@@ -1294,7 +976,7 @@ void getDoorState()
 	// Both low shouldn't be possible, we will report such instances as stopped to prompt the garage door owner there's somethin awry
 	isClosed = (pinBottomSensorValue == LOW);
 
-	if (_usingTopSensor)
+	if (_settings.usingTopSensor)
 	{
 		// Determine top sensor state from what the pin is saying (debounced)
 		pinTopSensorValue = readDebounced(_topSensor, PIN_FOR_TOP_SENSOR);
@@ -1344,7 +1026,7 @@ void getDoorState()
 	// With that in mind, we don't want to trigger a full Opening/Closing timer when the state of the Open or Closed sensor changes.
 	// So, set the previous open and previous closed the same as what they are now so we don't trigger the timer.
 	// Further, let HomeKit know of the updated target
-	if (_usingTopSensor && _previousIsStopped && !isStopped && _mqttOpeningClosingManagement == doorState::doorStateUnknown)
+	if (_settings.usingTopSensor && _previousIsStopped && !isStopped && _mqttOpeningClosingManagement == doorState::doorStateUnknown)
 	{
 #ifdef DEBUG_LEVEL2
 		sprintf(_debugOutput, "Setting the same - debugCounter: %d, isOpen: %d, isStopped: %d, isClosed: %d, _previousIsOpen: %d, _previousIsStopped: %d, _previousIsClosed: %d", debugCounter, isOpen, isStopped, isClosed, _previousIsOpen, _previousIsStopped, _previousIsClosed);
@@ -1357,20 +1039,12 @@ void getDoorState()
 		if (isOpen)
 		{
 			// Let HomeKit know of the updated target state
-			emptyPayload();
-			addToPayload(DOOR_STATE_HOMEKIT_OPEN);
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
-			sendMqtt(topicResponse, true);
-			emptyPayload();
+			publishTargetState(DOOR_STATE_HOMEKIT_OPEN);
 		}
 		else if (isClosed)
 		{
 			// Let HomeKit know of the updated target state
-			emptyPayload();
-			addToPayload(DOOR_STATE_HOMEKIT_CLOSED);
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
-			sendMqtt(topicResponse, true);
-			emptyPayload();
+			publishTargetState(DOOR_STATE_HOMEKIT_CLOSED);
 		}
 
 		// Force a Runstate Update immediately
@@ -1385,19 +1059,14 @@ void getDoorState()
 	{
 		// Start the closing timer
 		// So send out an MQTT saying target is CLOSED, and start the timer and set the status
-		emptyPayload();
-		addToPayload(DOOR_STATE_HOMEKIT_CLOSED);
-		sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
-		sendMqtt(topicResponse, true);
-
-		emptyPayload();
+		publishTargetState(DOOR_STATE_HOMEKIT_CLOSED);
 
 		_mqttOpeningClosingManagement = doorState::doorClosing;
 		_mqttOpeningClosingManagementTimer = millis();
 
 		// Skip the timer for closing when no top sensor and fob activated as the first we will know that the door is closed
 		// is when it is closed.  Further down this will enable the process to go straight in.
-		skipDoorCloseTimerDueToFobAndNoTopSensor = !_usingTopSensor;
+		skipDoorCloseTimerDueToFobAndNoTopSensor = !_settings.usingTopSensor;
 
 		// Force a Runstate Update immediately
 		_forceMqttOnce = true;
@@ -1411,12 +1080,7 @@ void getDoorState()
 	{
 		// Start the opening timer
 		// So send out an MQTT saying target is OPEN, and start the timer and set the status
-		emptyPayload();
-		addToPayload(DOOR_STATE_HOMEKIT_OPEN);
-		sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
-		sendMqtt(topicResponse, true);
-
-		emptyPayload();
+		publishTargetState(DOOR_STATE_HOMEKIT_OPEN);
 		_mqttOpeningClosingManagement = doorState::doorOpening;
 		_mqttOpeningClosingManagementTimer = millis();
 
@@ -1438,7 +1102,7 @@ void getDoorState()
 	if (_mqttOpeningClosingManagement == doorState::doorOpening)
 	{
 		// There was an MQTT to control or sensor change, which will have set the time of instigation
-		if (checkTimer(&_mqttOpeningClosingManagementTimer, _doorOpenTime))
+		if (checkTimer(&_mqttOpeningClosingManagementTimer, _settings.doorOpenTimeMs))
 		{
 			// Dealt with this now as the full time for the door to open has passed, so get rid so isn't processed next time
 			_mqttOpeningClosingManagement = doorState::doorStateUnknown;
@@ -1460,7 +1124,7 @@ void getDoorState()
 	else if (_mqttOpeningClosingManagement == doorState::doorClosing)
 	{
 		// There was an MQTT to control or sensor change, which will have set the time of instigation
-		if (checkTimer(&_mqttOpeningClosingManagementTimer, _doorCloseTime) || skipDoorCloseTimerDueToFobAndNoTopSensor)
+		if (checkTimer(&_mqttOpeningClosingManagementTimer, _settings.doorCloseTimeMs) || skipDoorCloseTimerDueToFobAndNoTopSensor)
 		{
 			// Dealt with this now as the full time for the door to close has passed, so get rid so isn't processed next time
 			_mqttOpeningClosingManagement = doorState::doorStateUnknown;
@@ -1571,9 +1235,9 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 	Serial.println(_debugOutput);
 #endif
 
-	// Ignore door commands which arrive immediately after (re)subscribing - these are most likely a retained
+	// Ignore commands which arrive immediately after (re)subscribing - these are most likely a retained
 	// message being replayed by the broker rather than someone pressing a button right now.
-	if (isDoorCommandTopic(topic) && millis() - _mqttSubscribedAt < COMMAND_IGNORE_AFTER_SUBSCRIBE_MS)
+	if (isCommandTopic(topic) && millis() - _mqttSubscribedAt < COMMAND_IGNORE_AFTER_SUBSCRIBE_MS)
 	{
 #ifdef DEBUG
 		Serial.println("Ignoring door command received immediately after subscribing (probable retained replay)");
@@ -1603,43 +1267,37 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 	// Get an easy to use subscription type for later
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_PERFORM_CLOSE);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_PERFORM_CLOSE);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 
 			// Let HomeKit know of the updated target state
-			emptyPayload();
-			addToPayload(DOOR_STATE_HOMEKIT_CLOSED);
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
-			sendMqtt(topicResponse, true);
+			publishTargetState(DOOR_STATE_HOMEKIT_CLOSED);
 
 			subscription = mqttSubscriptions::requestPerformClose;
 
 			// Don't retain a response to a request to close
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_PERFORM_CLOSE);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_PERFORM_CLOSE);
 			// Force a Runstate Update immediately
 			_forceMqttOnce = true;
 		}
 	}
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_PERFORM_OPEN);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_PERFORM_OPEN);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 
 			// Let HomeKit know of the updated target state
-			emptyPayload();
-			addToPayload(DOOR_STATE_HOMEKIT_OPEN);
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
-			sendMqtt(topicResponse, true);
+			publishTargetState(DOOR_STATE_HOMEKIT_OPEN);
 
 			subscription = mqttSubscriptions::requestPerformOpen;
 			// Don't retain a response to a request to open
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_PERFORM_OPEN);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_PERFORM_OPEN);
 
 			// Force a Runstate Update immediately
 			_forceMqttOnce = true;
@@ -1647,55 +1305,67 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 	}
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_PERFORM_STOP);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_PERFORM_STOP);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestPerformStop;
 			// Don't retain a response to a request to stop
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_PERFORM_STOP);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_PERFORM_STOP);
 
 			// Force a Runstate Update immediately
 			_forceMqttOnce = true;
+		}
+	}
+	if (!gotTopic)
+	{
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_PERFORM_REBOOT);
+		if (strcmp(topic, topicIncomingCheck) == 0)
+		{
+			gotTopic = true;
+			subscription = mqttSubscriptions::requestPerformReboot;
+			// Don't retain a response to a request to reboot
+			retain = false;
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_PERFORM_REBOOT);
 		}
 	}
 
 
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_IS_OPEN);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_IS_OPEN);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestIsOpen;
 			// Don't retain a response to a request of "Is Door Open"
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_IS_OPEN);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_IS_OPEN);
 		}
 	}
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_IS_CLOSED);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_IS_CLOSED);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestIsClosed;
 			// Don't retain a response to a request of "Is Door Closed"
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_IS_CLOSED);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_IS_CLOSED);
 		}
 	}
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_IS_STOPPED);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_IS_STOPPED);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestIsStopped;
 			// Don't retain a response to a request of "Is Door Stopped"
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_IS_STOPPED);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_IS_STOPPED);
 		}
 	}
 
@@ -1703,62 +1373,62 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_VALUE_PIN_CLOSE);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_VALUE_PIN_CLOSE);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestValuePinClose;
 			// Don't retain a response to a request of a pin value
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_VALUE_PIN_CLOSE);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_VALUE_PIN_CLOSE);
 		}
 	}
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_VALUE_PIN_OPEN);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_VALUE_PIN_OPEN);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestValuePinOpen;
 			// Don't retain a response to a request of a pin value
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_VALUE_PIN_OPEN);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_VALUE_PIN_OPEN);
 		}
 	}
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_VALUE_PIN_STOP);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_VALUE_PIN_STOP);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestValuePinStop;
 			// Don't retain a response to a request of a pin value
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_VALUE_PIN_STOP);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_VALUE_PIN_STOP);
 		}
 	}
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_VALUE_PIN_TOP_SENSOR);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_VALUE_PIN_TOP_SENSOR);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestValuePinTopSensor;
 			// Don't retain a response to a request of a pin value
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_VALUE_PIN_TOP_SENSOR);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_VALUE_PIN_TOP_SENSOR);
 		}
 	}
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_VALUE_PIN_BOTTOM_SENSOR);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_VALUE_PIN_BOTTOM_SENSOR);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestValuePinBottomSensor;
 			// Don't retain a response to a request of a pin value
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_VALUE_PIN_BOTTOM_SENSOR);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_VALUE_PIN_BOTTOM_SENSOR);
 		}
 	}
 
@@ -1766,78 +1436,78 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 #ifdef ENABLE_DEV_TOPICS
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_SET_VALUE_PIN_CLOSE);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_SET_VALUE_PIN_CLOSE);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestSetValuePinClose;
 			// Don't retain a response to a request of a set pin value
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_SET_VALUE_PIN_CLOSE);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_SET_VALUE_PIN_CLOSE);
 		}
 	}
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_SET_VALUE_PIN_STOP);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_SET_VALUE_PIN_STOP);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestSetValuePinStop;
 			// Don't retain a response to a request of a set pin value
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_SET_VALUE_PIN_STOP);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_SET_VALUE_PIN_STOP);
 		}
 	}
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_SET_VALUE_PIN_OPEN);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_SET_VALUE_PIN_OPEN);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestSetValuePinOpen;
 			// Don't retain a response to a request of a set pin value
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_SET_VALUE_PIN_OPEN);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_SET_VALUE_PIN_OPEN);
 		}
 	}
 
 
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_CLOSE);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_CLOSE);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestClearValuePinClose;
 			// Don't retain a response to a request of a clear pin value
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_CLOSE);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_CLOSE);
 		}
 	}
 
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_STOP);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_STOP);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestClearValuePinStop;
 			// Don't retain a response to a request of a clear pin value
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_STOP);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_STOP);
 		}
 	}
 
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_OPEN);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_SUB_REQUEST_CLEAR_VALUE_PIN_OPEN);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
 			subscription = mqttSubscriptions::requestClearValuePinOpen;
 			// Don't retain a response to a request of a clear pin value
 			retain = false;
-			sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_OPEN);
+			sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_CLEAR_VALUE_PIN_OPEN);
 		}
 	}
 #endif
@@ -1847,7 +1517,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 	// "In order to monitor accessory responsiveness automatically, enter the time (in milliseconds) to wait after publishing a 'set' topic to receive a confirmatary 'get' topic update."
 	if (!gotTopic)
 	{
-		sprintf(topicIncomingCheck, "%s%s", _deviceName, MQTT_HOMEKIT_SET_TARGET_DOOR_STATE);
+		sprintf(topicIncomingCheck, "%s%s", _settings.deviceName, MQTT_HOMEKIT_SET_TARGET_DOOR_STATE);
 		if (strcmp(topic, topicIncomingCheck) == 0)
 		{
 			gotTopic = true;
@@ -1856,15 +1526,11 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			{
 				// MQTTThing wants an response to the set via an equivalent get within 1S, send it now.
 				// Send the original payload back, retained
-				emptyPayload();
-				addToPayload(mqttIncomingPayload);
-				sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
-				sendMqtt(topicResponse, true);
-				emptyPayload();
+				publishTargetState(mqttIncomingPayload);
 
 				// Now in the onward processes ensure it is done
 				subscription = mqttSubscriptions::requestPerformOpen;
-				sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_PERFORM_OPEN);
+				sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_PERFORM_OPEN);
 
 				// Force a Runstate Update immediately
 				_forceMqttOnce = true;
@@ -1874,15 +1540,11 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			{
 				// MQTTThing wants an response to the set via an equivalent get within 1S, send it now.
 				// Send the original payload back, retained
-				emptyPayload();
-				addToPayload(mqttIncomingPayload);
-				sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
-				sendMqtt(topicResponse, true);
-				emptyPayload();
+				publishTargetState(mqttIncomingPayload);
 
 				// Now in the onward processes ensure it is done
 				subscription = mqttSubscriptions::requestPerformClose;
-				sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_PERFORM_CLOSE);
+				sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_PERFORM_CLOSE);
 
 				// Force a Runstate Update immediately
 				_forceMqttOnce = true;
@@ -1894,16 +1556,12 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			{
 				// MQTTThing wants an response to the set via an equivalent get within 1S, send it now.
 				// Send the original payload back, retained
-				emptyPayload();
-				addToPayload(mqttIncomingPayload);
-				sprintf(topicResponse, "%s%s", _deviceName, MQTT_HOMEKIT_GET_TARGET_DOOR_STATE);
-				sendMqtt(topicResponse, true);
-				emptyPayload();
+				publishTargetState(mqttIncomingPayload);
 
 
 				// Now in the onward processes ensure it is done
 				subscription = mqttSubscriptions::requestPerformStop;
-				sprintf(topicResponse, "%s%s", _deviceName, MQTT_SUB_RESPONSE_PERFORM_STOP);
+				sprintf(topicResponse, "%s%s", _settings.deviceName, MQTT_SUB_RESPONSE_PERFORM_STOP);
 
 				// Force a Runstate Update immediately
 				_forceMqttOnce = true;
@@ -1934,14 +1592,14 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 #endif
 
 			// Ensure OPEN/STOP relays are closed
-			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayIdleLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _settings.relayIdleLevel());
 			delay(50);
-			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayIdleLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _settings.relayIdleLevel());
 			delay(50);
 			// And for quarter of a second, open the CLOSE relay
-			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayActiveLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _settings.relayActiveLevel);
 			delay(250);
-			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayIdleLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _settings.relayIdleLevel());
 
 			result = statusValues::setCloseSuccess;
 			strcpy(statusMqttMessage, STATUS_SET_CLOSE_SUCCESS_MQTT_DESC);
@@ -1962,14 +1620,14 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 #endif
 
 			// Ensure CLOSE/STOP relays are closed
-			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayIdleLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _settings.relayIdleLevel());
 			delay(50);
-			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayIdleLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _settings.relayIdleLevel());
 			delay(50);
 			// And for quarter of a second, open the OPEN relay
-			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayActiveLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _settings.relayActiveLevel);
 			delay(250);
-			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayIdleLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _settings.relayIdleLevel());
 
 
 			result = statusValues::setOpenSuccess;
@@ -1992,14 +1650,14 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 #endif
 
 			// Ensure CLOSE/OPEN relays are closed
-			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayIdleLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _settings.relayIdleLevel());
 			delay(50);
-			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayIdleLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _settings.relayIdleLevel());
 			delay(50);
 			// And for quarter of a second, open the STOP relay
-			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayActiveLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _settings.relayActiveLevel);
 			delay(250);
-			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayIdleLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _settings.relayIdleLevel());
 
 			result = statusValues::setStopSuccess;
 			strcpy(statusMqttMessage, STATUS_SET_STOP_SUCCESS_MQTT_DESC);
@@ -2010,6 +1668,20 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			// Useful to do this here and not just rely on change of sensors because the top sensor may not be used
 			_mqttOpeningClosingManagement = doorState::doorStopped;
 			_mqttOpeningClosingManagementTimer = millis();
+		}
+		else if (subscription == mqttSubscriptions::requestPerformReboot)
+		{
+#ifdef DEBUG
+			Serial.println("Reboot requested");
+#endif
+			// Don't restart from inside the callback - the response below would never be sent.  loop() does it next.
+			_rebootRequested = true;
+
+			result = statusValues::setRebootSuccess;
+			strcpy(statusMqttMessage, STATUS_SET_REBOOT_SUCCESS_MQTT_DESC);
+			sprintf(stateAddition, "{\r\n    \"statusValue\": \"%s\"\r\n    ,\"done\": true\r\n}", statusMqttMessage);
+
+			resultAddToPayload = addToPayload(stateAddition);
 		}
 
 
@@ -2111,7 +1783,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Clearing Close Pin");
 			Serial.println(_debugOutput);
 #endif
-			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayIdleLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _settings.relayIdleLevel());
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
@@ -2121,7 +1793,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Clearing Stop Pin");
 			Serial.println(_debugOutput);
 #endif
-			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayIdleLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _settings.relayIdleLevel());
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
@@ -2131,7 +1803,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Clearing Open Pin");
 			Serial.println(_debugOutput);
 #endif
-			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayIdleLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _settings.relayIdleLevel());
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
@@ -2142,7 +1814,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Setting Close Pin");
 			Serial.println(_debugOutput);
 #endif
-			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _relayActiveLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_CLOSE, _settings.relayActiveLevel);
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
@@ -2152,7 +1824,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Setting Stop Pin");
 			Serial.println(_debugOutput);
 #endif
-			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _relayActiveLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_STOP, _settings.relayActiveLevel);
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
@@ -2162,7 +1834,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length)
 			sprintf(_debugOutput, "Setting Open Pin");
 			Serial.println(_debugOutput);
 #endif
-			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _relayActiveLevel);
+			digitalWrite(PIN_FOR_GARAGE_DOOR_OPEN, _settings.relayActiveLevel);
 			sprintf(stateAddition, "{\r\n    \"done\": true\r\n}");
 			resultAddToPayload = addToPayload(stateAddition);
 		}
