@@ -14,6 +14,7 @@ First, go and customise options at the top of Definitions.h!
 // Supporting files
 #include "Definitions.h"
 #include "Ota.h"
+#include "BootReport.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -112,6 +113,9 @@ const char* const DOOR_COMMAND_TOPICS[] =
 #endif
 };
 
+// Set once the boot report has been published, so it goes out once per boot rather than on every reconnect.
+bool _bootReportPublished = false;
+
 // When we last (re)subscribed to MQTT topics.  Door commands arriving shortly after are ignored - see COMMAND_IGNORE_AFTER_SUBSCRIBE_MS.
 unsigned long _mqttSubscribedAt = 0;
 
@@ -196,6 +200,9 @@ void setup()
 	// This is for communication with the development environment, NOT the Alpha system
 	// See Definitions.h for this.
 	Serial.begin(115200);
+
+	// Record why we reset and bump the persistent boot counter (published to MQTT once connected)
+	bootreport::begin();
 
 
 
@@ -536,12 +543,15 @@ File Format:
 	// We can reliably go on to determine state going foward.  OTA is serviced during the wait.
 	updateOLED(false, "", "Determine", "status...");
 #ifdef DEBUG
-	Serial.println("Determining status");
+	Serial.printf("Determining status (waiting %d ms)\r\n", _doorCloseTime > _doorOpenTime ? _doorCloseTime : _doorOpenTime);
 #endif
+	unsigned long settleStart = millis();
 	delayServicingOta(_doorCloseTime > _doorOpenTime ? _doorCloseTime : _doorOpenTime);
 	updateOLED(false, "", "", _version);
 #ifdef DEBUG
-	Serial.println("Determining status complete");
+	Serial.printf("Determining status complete after %lu ms\r\n", millis() - settleStart);
+#else
+	(void)settleStart;
 #endif
 
 
@@ -668,6 +678,14 @@ void setupWifi()
 	otaHooks.onEnd = onOtaEnd;
 	ota::begin(_deviceName, TOSTRING(OTA_PASSWORD), OTA_PORT, otaHooks);
 
+	// Start NTP so the boot report can carry a real timestamp.  Only needed once - it keeps itself in sync after.
+	static bool clockStarted = false;
+	if (!clockStarted)
+	{
+		bootreport::startClock();
+		clockStarted = true;
+	}
+
 	// Connected, so ditch out with blank screen
 	updateOLED(false, "", "", _version);
 }
@@ -769,6 +787,20 @@ cleanSession boolean (optional) - whether to connect clean-session or not
 				// Publish the current state straight away rather than waiting for the periodic heartbeat - the broker
 				// may have restarted and lost its retained copy.
 				_forceMqttOnce = true;
+
+				// Once per boot: publish when/why/which firmware we started with (retained, so it's always there to read)
+				if (!_bootReportPublished)
+				{
+					char bootReport[320];
+					snprintf(topic, sizeof(topic), "%s%s", _deviceName, MQTT_DEVICE_BOOT);
+					if (bootreport::toJson(bootReport, sizeof(bootReport), _version, WiFi.localIP().toString().c_str(), _macAddress))
+					{
+						_bootReportPublished = _mqtt.publish(topic, bootReport, true);
+#ifdef DEBUG
+						Serial.println(bootReport);
+#endif
+					}
+				}
 
 				// Connected, so ditch out with runstate on the screen
 				updateRunstate();

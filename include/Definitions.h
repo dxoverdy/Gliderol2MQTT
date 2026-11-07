@@ -187,6 +187,9 @@ enum mqttSubscriptions
 // Birth and Last Will and Testament Topic
 #define MQTT_CONNECTION_STATUS "/connection_status"
 
+// Published (retained) once per boot: when, why and with which firmware the device started.  See BootReport.h.
+#define MQTT_DEVICE_BOOT "/device/boot"
+
 // Current and Target Request and Response Topics
 #define MQTT_HOMEKIT_SET_TARGET_DOOR_STATE "/set/target/door/state"
 #define MQTT_HOMEKIT_GET_TARGET_DOOR_STATE "/get/target/door/state"

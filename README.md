@@ -58,6 +58,23 @@ false
 Where false means Gliderol2MQTT is offline.
 
 
+### Boot Report
+Once per boot, after first connecting to the broker, Gliderol2MQTT publishes a retained JSON message to:
+```
+Gliderol2MQTT/device/boot
+```
+For example:
+```
+{"time": "2026-11-07T08:15:02Z", "reset_reason": "software", "boot_count": 42, "online_after_ms": 12873,
+ "version": "v2.0", "firmware_md5": "3f2a...", "ip": "192.168.1.50", "mac": "0x..."}
+```
+- **time** - UTC, from NTP.  `null` if the time couldn't be fetched.
+- **reset_reason** - `power_on`, `external` (reset button), `software` (includes the reboot after an OTA update), `crash`, `watchdog`, `brownout` (supply voltage dipped) or `unknown`.
+- **boot_count** - boots since first flashed; survives reboots and reflashing.
+- **online_after_ms** - time from power-on to this message.  It includes the "Determine status" wait, so expect a little over your longest door time.
+- **firmware_md5** - fingerprint of the running firmware; it changes with every build, which confirms an OTA update really landed.
+
+
 ## Current State
 The MQTT topic to subscribe to is:
 ```
