@@ -32,6 +32,6 @@ namespace bootreport
 	// Number of boots since the counter was first created (survives reboots and reflashing).
 	unsigned long bootCount();
 
-	// Write the report as a JSON object.  Returns false if it didn't fit.
-	bool toJson(char* buffer, size_t length, const char* version, const char* ip, const char* mac);
+	// Write the report as a JSON object.  rssi is the WiFi signal strength in dBm.  Returns false if it didn't fit.
+	bool toJson(char* buffer, size_t length, const char* version, const char* ip, const char* mac, int rssi);
 }

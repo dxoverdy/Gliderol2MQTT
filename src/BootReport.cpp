@@ -79,7 +79,7 @@ namespace bootreport
 		return _bootCount;
 	}
 
-	bool toJson(char* buffer, size_t length, const char* version, const char* ip, const char* mac)
+	bool toJson(char* buffer, size_t length, const char* version, const char* ip, const char* mac, int rssi)
 	{
 		char timeText[32] = "null";
 		time_t now = time(nullptr);
@@ -97,9 +97,9 @@ namespace bootreport
 
 		int written = snprintf(buffer, length,
 			"{\"time\": %s, \"reset_reason\": \"%s\", \"boot_count\": %lu, \"online_after_ms\": %lu, "
-			"\"version\": \"%s\", \"firmware_md5\": \"%s\", \"ip\": \"%s\", \"mac\": \"%s\"}",
+			"\"version\": \"%s\", \"firmware_md5\": \"%s\", \"ip\": \"%s\", \"mac\": \"%s\", \"rssi\": %d}",
 			timeText, _resetReason, _bootCount, millis(),
-			version, firmwareMd5.c_str(), ip, mac);
+			version, firmwareMd5.c_str(), ip, mac, rssi);
 
 		return written > 0 && (size_t)written < length;
 	}

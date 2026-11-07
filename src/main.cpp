@@ -284,6 +284,12 @@ void startWifi()
 
 	// Set up in Station Mode - Will be connecting to an access point
 	WiFi.mode(WIFI_STA);
+
+	// Keep the radio awake.  By default the ESP32 uses modem-sleep, where the radio dozes between router beacons.
+	// That makes it slow to respond and, worse, it routinely misses multicast traffic - which is what mDNS uses, so
+	// <device>.local stops resolving and OTA uploads by name fail.  The extra ~80mA is irrelevant on mains/12V power.
+	WiFi.setSleep(false);
+
 	WiFi.setAutoReconnect(true);
 	WiFi.begin(_settings.wifiSsid, _settings.wifiPassword);
 }
@@ -491,7 +497,7 @@ cleanSession boolean (optional) - whether to connect clean-session or not
 	{
 		char bootReport[320];
 		snprintf(topic, sizeof(topic), "%s%s", _settings.deviceName, MQTT_DEVICE_BOOT);
-		if (bootreport::toJson(bootReport, sizeof(bootReport), _version, WiFi.localIP().toString().c_str(), _macAddress))
+		if (bootreport::toJson(bootReport, sizeof(bootReport), _version, WiFi.localIP().toString().c_str(), _macAddress, WiFi.RSSI()))
 		{
 			_bootReportPublished = _mqtt.publish(topic, bootReport, true);
 #ifdef DEBUG

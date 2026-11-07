@@ -73,6 +73,7 @@ For example:
 - **boot_count** - boots since first flashed; survives reboots and reflashing.
 - **online_after_ms** - time from power-on to this message.  It includes the "Determine status" wait, so expect a little over your longest door time.
 - **firmware_md5** - fingerprint of the running firmware; it changes with every build, which confirms an OTA update really landed.
+- **rssi** - WiFi signal strength in dBm at boot.  Roughly: above -60 excellent, -60 to -70 good, -70 to -80 weak, below -80 unreliable.
 
 
 ## Current State
